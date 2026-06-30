@@ -23,7 +23,6 @@
     </properties>
 
     <modules>
-        <module>dream-api</module>
         <module>dream-common</module>
         <module>dream-dal</module>
         <module>dream-integration</module>
@@ -37,11 +36,6 @@
 
     <dependencyManagement>
         <dependencies>
-            <dependency>
-                <groupId>com.example.dream</groupId>
-                <artifactId>dream-api</artifactId>
-                <version>${dream.version}</version>
-            </dependency>
             <dependency>
                 <groupId>com.example.dream</groupId>
                 <artifactId>dream-common</artifactId>
@@ -79,13 +73,5 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
-
-    <dependencies>
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <optional>true</optional>
-        </dependency>
-    </dependencies>
 
 </project>

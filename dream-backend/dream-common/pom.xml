@@ -13,4 +13,11 @@
     <name>dream-common</name>
     <description>全局公共底座</description>
 
+    <dependencies>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+    </dependencies>
+
 </project>

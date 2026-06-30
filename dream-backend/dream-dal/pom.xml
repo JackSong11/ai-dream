@@ -18,10 +18,6 @@
             <groupId>com.example.dream</groupId>
             <artifactId>dream-common</artifactId>
         </dependency>
-        <dependency>
-            <groupId>com.example.dream</groupId>
-            <artifactId>dream-api</artifactId>
-        </dependency>
     </dependencies>
 
 </project>

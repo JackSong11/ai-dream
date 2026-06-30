@@ -16,14 +16,6 @@
     <dependencies>
         <dependency>
             <groupId>com.example.dream</groupId>
-            <artifactId>dream-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.example.dream</groupId>
-            <artifactId>dream-common</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.example.dream</groupId>
             <artifactId>dream-dal</artifactId>
         </dependency>
         <dependency>
