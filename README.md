@@ -4,6 +4,29 @@
 
 ---
 
+## 🛠️ 技术栈与环境要求
+本项目基于当前主流的现代化技术栈开发，全面拥抱 **JDK 21** 虚拟线程等新特性，保障系统的高并发与高性能。
+
+### 1. ⚙️ 开发环境要求
+| 工具/环境 | 推荐版本 | 说明 |
+| :--- | :--- | :--- |
+| **JDK** | `21` | 核心运行环境，支持虚拟线程与新语法特性 |
+| **Maven** | `3.9.x+` | 项目构建与依赖管理工具 |
+
+### 2. ☕ 后端核心技术栈
+* **核心框架**：Spring Boot 4.1
+* **持久层框架**：MyBatis / MyBatis-Plus 3.5.x
+* **并发编程**：充分利用 JDK 21 Virtual Threads (虚拟线程) 优化高并发 I/O
+* **任务与异步**：
+    * **MQ**：RocketMQ / RabbitMQ (用于 `dream-processor` 异步解耦)
+    * **Job**：Xxl-Job / Spring Schedule (定时任务支撑)
+* **其他三方集成**：封装于 `dream-integration`，包含大模型 SDK (如 Spring AI)、钉钉/邮件网关等。
+
+### 3. 🎨 前端核心技术栈
+* **用户侧 (dream-app-ui)**：Vue 3 / React + Vite + TailwindCSS (智能助手流式传输 SSE 适配)
+* **管理侧 (dream-admin-ui)**：Vue 3 + Vite + Element-Plus (后台数据与模型配置管理)
+---
+
 ## 📂 项目目录结构
 
 ```text
@@ -34,6 +57,7 @@ ai-dream/
     ├── dream-integration/               # 🔌 外部集成层 (外部第三方服务调用，如调用外部钉钉，邮件，SDK等)
     └── dream-processor/                 # ⚙️ 异步处理层 (回调入口、MQ 消费、DTS 订阅、Job 定时任务、工作流等)
 ```
+---
 ## 📐 对象说明
 ```text
 BO（Business Object）：业务对象，与领域设计的实体对应，在 service 层使用。
