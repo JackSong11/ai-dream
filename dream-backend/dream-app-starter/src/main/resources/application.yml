@@ -1,0 +1,6 @@
+spring:
+  application:
+    name: dream-app
+
+server:
+  port: 8080
