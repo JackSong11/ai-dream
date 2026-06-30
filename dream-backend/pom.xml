@@ -29,9 +29,7 @@
         <module>dream-processor</module>
         <module>dream-service</module>
         <module>dream-app-web</module>
-        <module>dream-admin-web</module>
         <module>dream-app-starter</module>
-        <module>dream-admin-starter</module>
     </modules>
 
     <dependencyManagement>
@@ -67,9 +65,10 @@
                 <version>${dream.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.example.dream</groupId>
-                <artifactId>dream-admin-web</artifactId>
-                <version>${dream.version}</version>
+                <groupId>org.projectlombok</groupId>
+                <artifactId>lombok</artifactId>
+                <version>1.18.30</version>
+                <scope>provided</scope>
             </dependency>
         </dependencies>
     </dependencyManagement>

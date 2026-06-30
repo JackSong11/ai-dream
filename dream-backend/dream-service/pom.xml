@@ -22,6 +22,10 @@
             <groupId>com.example.dream</groupId>
             <artifactId>dream-integration</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
     </dependencies>
 
 </project>

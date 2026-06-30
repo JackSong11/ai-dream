@@ -24,7 +24,6 @@
 
 ### 3. 🎨 前端核心技术栈
 * **用户侧 (dream-app-ui)**：Vue 3 + Vite + TypeScript + TailwindCSS (智能助手流式传输 SSE 适配)
-* **管理侧 (dream-admin-ui)**：Vue 3 + Vite + TypeScript + Element-Plus (后台数据与模型配置管理)
 ---
 
 ## 📂 项目目录结构
@@ -33,7 +32,6 @@
 ai-dream/
 ├── dream-frontend/                      # 🎨 前端工程
 │   ├── dream-app-ui/                    # 用户侧智能助手前端 (Vue3)
-│   └── dream-admin-ui/                  # ⚙️ 后台管理系统前端 (Vue3 + Element-Plus)
 │
 └── dream-backend/                       # ☕ 后端 Maven 父工程
     ├── pom.xml                          # 父 POM 配置
@@ -42,9 +40,6 @@ ai-dream/
     │  [ 入口层 / 启动层 ] -------------- (纵向拆分，各自独立打包部署)
     ├── dream-app-web/                   # 📱 用户侧 WEB 层 (处理 HTTP / SSE / WS 请求)
     ├── dream-app-starter/               # 🚀 用户侧 Spring Boot 启动入口：启动层，包装springboot的starter和一些注册服务的配置
-    │
-    ├── dream-admin-web/                 # ⚙️ 后台管理侧 WEB 层 (知识库管理、大模型配置等 Controller)
-    ├── dream-admin-starter/             # 🚀 后台管理侧 Spring Boot 启动入口 (独立打包可执行 JAR)：启动层，包装springboot的starter和一些注册服务的配置
     │
     │  [ 核心业务层 ] ------------------ (统一 Maven 模块，通过包结构进行领域分层)
     ├── dream-service/                   # 🧠 核心业务模块
