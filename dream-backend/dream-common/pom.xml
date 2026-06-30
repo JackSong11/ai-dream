@@ -3,15 +3,14 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.example.dream</groupId>
-    <artifactId>ai-dream</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
-    <name>ai-dream</name>
-    <description>ai-dream root aggregator</description>
-    <packaging>pom</packaging>
+    <parent>
+        <groupId>com.example.dream</groupId>
+        <artifactId>dream-backend</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+    </parent>
 
-    <modules>
-        <module>dream-backend</module>
-    </modules>
+    <artifactId>dream-common</artifactId>
+    <name>dream-common</name>
+    <description>全局公共底座</description>
 
 </project>

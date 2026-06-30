@@ -23,8 +23,8 @@
 * **其他三方集成**：封装于 `dream-integration`，包含大模型 SDK (如 Spring AI)、钉钉/邮件网关等。
 
 ### 3. 🎨 前端核心技术栈
-* **用户侧 (dream-app-ui)**：Vue 3 / React + Vite + TailwindCSS (智能助手流式传输 SSE 适配)
-* **管理侧 (dream-admin-ui)**：Vue 3 + Vite + Element-Plus (后台数据与模型配置管理)
+* **用户侧 (dream-app-ui)**：Vue 3 + Vite + TypeScript + TailwindCSS (智能助手流式传输 SSE 适配)
+* **管理侧 (dream-admin-ui)**：Vue 3 + Vite + TypeScript + Element-Plus (后台数据与模型配置管理)
 ---
 
 ## 📂 项目目录结构
@@ -32,7 +32,7 @@
 ```text
 ai-dream/
 ├── dream-frontend/                      # 🎨 前端工程
-│   ├── dream-app-ui/                    # 用户侧智能助手前端 (Vue3 / React)
+│   ├── dream-app-ui/                    # 用户侧智能助手前端 (Vue3)
 │   └── dream-admin-ui/                  # ⚙️ 后台管理系统前端 (Vue3 + Element-Plus)
 │
 └── dream-backend/                       # ☕ 后端 Maven 父工程

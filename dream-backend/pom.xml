@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.1.0</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.example.dream</groupId>
+    <artifactId>dream-backend</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>dream-backend</name>
+    <description>ai-dream backend parent</description>
+    <packaging>pom</packaging>
+
+    <properties>
+        <java.version>21</java.version>
+        <dream.version>0.0.1-SNAPSHOT</dream.version>
+    </properties>
+
+    <modules>
+        <module>dream-api</module>
+        <module>dream-common</module>
+        <module>dream-dal</module>
+        <module>dream-integration</module>
+        <module>dream-processor</module>
+        <module>dream-service</module>
+        <module>dream-app-web</module>
+        <module>dream-admin-web</module>
+        <module>dream-app-starter</module>
+        <module>dream-admin-starter</module>
+    </modules>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.example.dream</groupId>
+                <artifactId>dream-api</artifactId>
+                <version>${dream.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.example.dream</groupId>
+                <artifactId>dream-common</artifactId>
+                <version>${dream.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.example.dream</groupId>
+                <artifactId>dream-dal</artifactId>
+                <version>${dream.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.example.dream</groupId>
+                <artifactId>dream-integration</artifactId>
+                <version>${dream.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.example.dream</groupId>
+                <artifactId>dream-processor</artifactId>
+                <version>${dream.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.example.dream</groupId>
+                <artifactId>dream-service</artifactId>
+                <version>${dream.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.example.dream</groupId>
+                <artifactId>dream-app-web</artifactId>
+                <version>${dream.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.example.dream</groupId>
+                <artifactId>dream-admin-web</artifactId>
+                <version>${dream.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+
+</project>
