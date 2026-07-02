@@ -1,0 +1,49 @@
+{
+  "messages": [
+    {
+      "content": "Tell me a joke",
+      "role": "user"
+    }
+  ],
+  "model": "Qwen3-235B-A22B",
+  "stream_options": {
+    "include_usage": true
+  },
+  "stream": true
+}
+
+
+
+
+
+
+data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
+
+data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":"Why","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
+
+data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":" don","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
+
+data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":"'t skeletons","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
+
+data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":" fight","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
+
+data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":" each other?\n\n","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
+
+data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":"Because","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
+
+data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":" they don't have","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
+
+data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":" the guts!","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
+
+data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":" ","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
+
+data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":"💀","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
+
+data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":"😄","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
+
+data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":"stop","matched_stop":151645}],"usage":null}
+
+data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[],"usage":{"prompt_tokens":12,"total_tokens":32,"completion_tokens":20,"prompt_tokens_details":null,"reasoning_tokens":0}}
+
+data: [DONE]
+
