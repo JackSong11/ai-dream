@@ -1,15 +1,69 @@
 {
   "messages": [
     {
-      "content": "Tell me a joke",
+      "content": "What day is tomorrow?",
       "role": "user"
     }
   ],
   "model": "Qwen3-235B-A22B",
-  "stream_options": {
-    "include_usage": true
+  "tools": [
+    {
+      "function": {
+        "name": "getCurrentDateTime",
+        "description": "Get the current date and time in the user's timezone",
+        "parameters": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false,
+          "strict": true
+        }
+      },
+      "type": "function"
+    }
+  ]
+}
+
+{
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "logprobs": null,
+      "matched_stop": null,
+      "message": {
+        "content": null,
+        "reasoning_content": null,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{}",
+              "name": "getCurrentDateTime"
+            },
+            "id": "call_9b2dd3e82ac841e5bd9a1e3c",
+            "index": 0,
+            "type": "function"
+          }
+        ]
+      }
+    }
+  ],
+  "created": 1782986857,
+  "id": "69ac40392ff4440fab3236c43158bd15",
+  "metadata": {
+    "weight_version": "default"
   },
-  "stream": true
+  "model": "Qwen3-235B-A22B",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 16,
+    "prompt_tokens": 182,
+    "prompt_tokens_details": null,
+    "reasoning_tokens": 0,
+    "total_tokens": 198
+  }
 }
 
 
@@ -17,33 +71,89 @@
 
 
 
-data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
 
-data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":"Why","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
 
-data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":" don","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
 
-data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":"'t skeletons","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
 
-data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":" fight","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
 
-data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":" each other?\n\n","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
 
-data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":"Because","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
 
-data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":" they don't have","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
+{
+  "messages": [
+    {
+      "content": "What day is tomorrow?",
+      "role": "user"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_9b2dd3e82ac841e5bd9a1e3c",
+          "function": {
+            "arguments": "{}",
+            "name": "getCurrentDateTime"
+          },
+          "type": "function",
+          "index": 0
+        }
+      ]
+    },
+    {
+      "content": "\"2026-07-02T18:07:36.955790+08:00[Asia/Shanghai]\"",
+      "role": "tool",
+      "tool_call_id": "call_9b2dd3e82ac841e5bd9a1e3c"
+    }
+  ],
+  "model": "Qwen3-235B-A22B",
+  "tools": [
+    {
+      "function": {
+        "name": "getCurrentDateTime",
+        "description": "Get the current date and time in the user's timezone",
+        "parameters": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false,
+          "strict": true
+        }
+      },
+      "type": "function"
+    }
+  ]
+}
 
-data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":" the guts!","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
 
-data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":" ","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
 
-data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":"💀","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
-
-data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":"😄","reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":null,"matched_stop":null}],"usage":null}
-
-data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":null},"logprobs":null,"finish_reason":"stop","matched_stop":151645}],"usage":null}
-
-data: {"id":"08e0c3246df941cf866a48c8bd0819b0","object":"chat.completion.chunk","created":1782916107,"model":"Qwen3-235B-A22B","choices":[],"usage":{"prompt_tokens":12,"total_tokens":32,"completion_tokens":20,"prompt_tokens_details":null,"reasoning_tokens":0}}
-
-data: [DONE]
-
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "logprobs": null,
+      "matched_stop": 151645,
+      "message": {
+        "content": "Tomorrow is Friday, July 3, 2026.",
+        "reasoning_content": null,
+        "role": "assistant",
+        "tool_calls": null
+      }
+    }
+  ],
+  "created": 1782986857,
+  "id": "1993df8282ee49fdaee920dc7d0ac124",
+  "metadata": {
+    "weight_version": "default"
+  },
+  "model": "Qwen3-235B-A22B",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 15,
+    "prompt_tokens": 248,
+    "prompt_tokens_details": null,
+    "reasoning_tokens": 0,
+    "total_tokens": 263
+  }
+}
