@@ -4,6 +4,7 @@ import com.example.dream.common.dto.ActorFilms;
 import org.springframework.ai.chat.client.AdvisorParams;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.ParameterizedTypeReference;
@@ -62,10 +63,31 @@ class MyController {
 //                .user("Generate the filmography for a random actor.")
 //                .call()
 //                .entity(ActorFilms.class);
+//        ActorFilms actorFilms = chatClientBuilder.build().prompt()
+//                .user("Generate the filmography for a random actor.")
+//                .call()
+//                .entity(ActorFilms.class, spec -> spec.validateSchema());
+
+//        // 2. 创建一个 BeanOutputConverter，它是 StructuredOutputConverter 的实现类
+//        // 这里传入 ActorFilms.class，让转换器知道要把 AI 的结果转成什么对象
+//        BeanOutputConverter<ActorFilms> converter = new BeanOutputConverter<>(ActorFilms.class);
+//
+//        // 3. 使用带有 StructuredOutputConverter 参数的 entity() 方法
+//        ActorFilms actorFilms = chatClientBuilder.build().prompt()
+//                // 核心原理：converter.getFormat() 会自动把"请按以下JSON格式返回..."的提示词追加到你的 user message 后面
+//                .user("Generate the filmography for a random actor.")
+//                .call()
+//                .entity(converter); // <-- 这里触发了你想要的那个重载方法
+        // 2. 创建一个 BeanOutputConverter，它是 StructuredOutputConverter 的实现类
+        // 这里传入 ActorFilms.class，让转换器知道要把 AI 的结果转成什么对象
+        BeanOutputConverter<ActorFilms> converter = new BeanOutputConverter<>(ActorFilms.class);
+
+        // 3. 使用带有 StructuredOutputConverter 参数的 entity() 方法
         ActorFilms actorFilms = chatClientBuilder.build().prompt()
+                // 核心原理：converter.getFormat() 会自动把"请按以下JSON格式返回..."的提示词追加到你的 user message 后面
                 .user("Generate the filmography for a random actor.")
                 .call()
-                .entity(ActorFilms.class, spec -> spec.validateSchema());
+                .entity(converter, spec -> spec.useProviderStructuredOutput()); // <-- 这里触发了你想要的那个重载方法
         System.out.println(actorFilms);
 //        return Map.of("generation", this.chatModel.call(message));
         return null;
