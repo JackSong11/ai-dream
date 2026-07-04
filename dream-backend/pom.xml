@@ -67,12 +67,29 @@
             <dependency>
                 <groupId>org.projectlombok</groupId>
                 <artifactId>lombok</artifactId>
-                <version>1.18.30</version>
+                <version>1.18.34</version>
                 <scope>provided</scope>
             </dependency>
-            <!-- 这行代码是版本管理。在 Maven 术语中，通过 <scope>import</scope> 的方式将一个 POM 文件的定义拉取到当前项目的 <dependencyManagement> 中，这个动作在官方定义里就叫做 “Importing a BOM” （导入/引入一个BOM）。-->
-            <!-- 当你用 <scope>import</scope> 把 spring-ai-bom 写进 <dependencyManagement> 时，你其实是在项目里引入了一份官方的“标准版本清单”。此时，Maven 没有去下载任何具体的 AI 功能代码。但它成功把 2.0.0 版本的 Spring AI 版本控制规则引入到了你的整个项目生命周期中。-->
-            <!-- 为什么必须这样“两步走”？-->
+            <!-- MinIO 对象存储 SDK -->
+            <dependency>
+                <groupId>io.minio</groupId>
+                <artifactId>minio</artifactId>
+                <version>8.6.0</version>
+            </dependency>
+            <dependency>
+                <groupId>org.bouncycastle</groupId>
+                <artifactId>bcprov-jdk18on</artifactId>
+                <version>1.84</version>
+            </dependency>
+            <!-- MinIO 底层 HTTP 客户端，需显式引入避免传递依赖缺失导致 okhttp3.HttpUrl 找不到 -->
+            <dependency>
+                <groupId>com.squareup.okhttp3</groupId>
+                <artifactId>okhttp</artifactId>
+                <version>4.12.0</version>
+            </dependency>
+            <!-- 这行代码是版本管理。在 Maven 术语中，通过 <scope>import</scope> 的方式将一个 POM 文件的定义拉取到当前项目的 <dependencyManagement> 中，这个动作在官方定义里就叫做 "Importing a BOM" （导入/引入一个BOM）。-->
+            <!-- 当你用 <scope>import</scope> 把 spring-ai-bom 写进 <dependencyManagement> 时，你其实是在项目里引入了一份官方的"标准版本清单"。此时，Maven 没有去下载任何具体的 AI 功能代码。但它成功把 2.0.0 版本的 Spring AI 版本控制规则引入到了你的整个项目生命周期中。-->
+            <!-- 为什么必须这样"两步走"？-->
             <!-- Spring AI 旗下有几十个子模块（比如 spring-ai-openai、spring-ai-deepseek、spring-ai-ollama、spring-ai-pgvector 等等）。-->
             <!-- 如果不引入 BOM，你每次想换版本，都要把这几十个子模块的版本号全部手动改一遍，而且极其容易发生版本冲突（比如 OpenAI Starter 用的是 1.0，矢量数据库用的是 2.0，直接崩掉）。-->
             <dependency>
@@ -84,5 +101,26 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <!-- 显式配置 Lombok 注解处理器路径，避免 @Slf4j 等注解不生效导致找不到 log 变量 -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <configuration>
+                        <annotationProcessorPaths>
+                            <path>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                                <version>1.18.34</version>
+                            </path>
+                        </annotationProcessorPaths>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
 
 </project>

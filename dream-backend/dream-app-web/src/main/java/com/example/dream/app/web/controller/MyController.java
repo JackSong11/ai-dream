@@ -96,10 +96,28 @@ class MyController {
 
     // 核心：必须指定 produces = MediaType.TEXT_EVENT_STREAM_VALUE
     @GetMapping(value = "/joke-stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> getJokeStream() {
+    public Flux<ChatResponse> getJokeStream() {
+//        return chatClientBuilder.build().prompt()
+//                .user("Tell me a joke")
+//                .stream()
+//                .content();
         return chatClientBuilder.build().prompt()
                 .user("Tell me a joke")
                 .stream()
+                .chatResponse();
+    }
+
+
+    @GetMapping("/tool")
+    String tool(String userInput) {
+
+        String response = chatClientBuilder.build()
+                .prompt("Can you set an alarm 10 minutes from now?")
+                .tools(new DateTimeTools())
+                .call()
                 .content();
+
+        System.out.println(response);
+        return response;
     }
 }
