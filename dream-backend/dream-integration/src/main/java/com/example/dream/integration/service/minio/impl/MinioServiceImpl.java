@@ -34,6 +34,7 @@ import java.util.concurrent.TimeUnit;
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class MinioServiceImpl implements OssService {
 
     @Value("${minio.bucket:dream}")
@@ -42,8 +43,7 @@ public class MinioServiceImpl implements OssService {
     @Value("${minio.presign-expiry-seconds:7200}")
     private int presignExpirySeconds;
 
-    @Resource
-    private MinioClient minioClient;
+    private final MinioClient minioClient;
 
     @Override
     public boolean bucketExists(String bucket) {
