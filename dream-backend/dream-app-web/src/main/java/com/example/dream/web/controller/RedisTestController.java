@@ -18,7 +18,7 @@ import java.util.Map;
 public class RedisTestController {
 
     // 1. 注入默认自动装配的 RedisTemplate (Object, Object)
-    private final RedisTemplate<Object, Object> redisTemplate;
+    private final RedisTemplate<String, Object> redisTemplate;
 
     // 2. 注入默认自动装配的 StringRedisTemplate (用于对比)
     private final StringRedisTemplate stringRedisTemplate;

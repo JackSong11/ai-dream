@@ -27,7 +27,7 @@ CREATE TABLE `biz_user`
     `user_id`       varchar(50)  NOT NULL,
     `password_hash` varchar(255) NOT NULL,
     `role`          enum ('ADMIN','USER','OPERATOR') DEFAULT 'USER',
-    `status`        int                              DEFAULT NULL,
+    `status`        int                              DEFAULT NULL COMMENT '1-启用;0-禁用',
     `avatar_url`    mediumtext,
     `delete_flag`   tinyint      NOT NULL            DEFAULT 0 COMMENT '逻辑删除字段 0:代表有效， 1:代表逻辑删除',
     `creator`       varchar(20)                      DEFAULT NULL COMMENT '创建人',
