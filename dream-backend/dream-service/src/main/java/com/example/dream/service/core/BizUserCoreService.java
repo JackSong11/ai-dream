@@ -8,4 +8,11 @@ import com.example.dream.dal.po.BizUserPO;
  */
 public interface BizUserCoreService extends IService<BizUserPO> {
 
+    /**
+     * 根据登录账号查询用户
+     *
+     * @param userId 登录账号（biz_user.user_id）
+     * @return 用户 PO，不存在返回 null
+     */
+    BizUserPO getByUserId(String userId);
 }
