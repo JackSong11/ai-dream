@@ -104,6 +104,19 @@ class MyController {
                 .chatResponse();
     }
 
+    @GetMapping(value = "/joke-stream1", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ChatResponse> getJokeStream1() {
+        System.out.println("进入控制器的线程: " + Thread.currentThread().getName());
+
+        return chatClientBuilder.build().prompt()
+                .user("Tell me a joke")
+                .stream()
+                .chatResponse()
+                .doOnNext(response -> {
+                    System.out.println("消费流数据的线程: " + Thread.currentThread().getName());
+                });
+    }
+
 
     @GetMapping("/tool")
     String tool(String userInput) {
