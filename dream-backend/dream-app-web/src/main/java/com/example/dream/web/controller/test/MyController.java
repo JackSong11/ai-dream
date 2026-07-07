@@ -1,4 +1,4 @@
-package com.example.dream.web.controller;
+package com.example.dream.web.controller.test;
 
 import com.example.dream.common.dto.ActorFilms;
 import org.springframework.ai.chat.client.ChatClient;

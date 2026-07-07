@@ -1,4 +1,4 @@
-package com.example.dream.web.controller;
+package com.example.dream.web.controller.test;
 
 import com.example.dream.common.vo.Result;
 import com.example.dream.dal.mapper.BizUserMapper;

@@ -33,6 +33,11 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
+        <!-- Elasticsearch：内置官方 Java API Client (co.elastic.clients)，版本由 Spring Boot 统一管理 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-elasticsearch</artifactId>
+        </dependency>
         <!-- 日志门面 -->
         <dependency>
             <groupId>org.slf4j</groupId>

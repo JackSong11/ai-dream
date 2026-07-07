@@ -1,4 +1,4 @@
-package com.example.dream.web.controller;
+package com.example.dream.web.controller.test;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

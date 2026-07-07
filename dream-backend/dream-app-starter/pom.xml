@@ -18,6 +18,12 @@
             <groupId>com.example.dream</groupId>
             <artifactId>dream-app-web</artifactId>
         </dependency>
+        <!-- 测试依赖，用于集成测试验证 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

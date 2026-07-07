@@ -1,4 +1,4 @@
-package com.example.dream.web.controller;
+package com.example.dream.web.controller.test;
 
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
