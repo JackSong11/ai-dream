@@ -5,8 +5,6 @@ import com.example.dream.dal.po.base.BasePO;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import java.math.BigDecimal;
-
 /**
  * 文档表持久化对象
  * kb_document
@@ -32,11 +30,6 @@ public class KbDocumentPO extends BasePO {
      * 解析器配置（JSON 字符串，对应 RagFlow parser_config）
      */
     private String parserConfig;
-
-    /**
-     * 处理流水线 ID（对应 RagFlow pipeline_id）
-     */
-    private String pipelineId;
 
     /**
      * 文档类型（对应 RagFlow FileType：doc/visual/aural/virtual/other 等）
@@ -67,16 +60,6 @@ public class KbDocumentPO extends BasePO {
      * 运行/处理状态（对应 RagFlow run，"0"=未开始 UNSTART）
      */
     private int run;
-
-    /**
-     * 处理进度，取值 0~1（对应 RagFlow document progress）
-     */
-    private BigDecimal progress;
-
-    /**
-     * 进度描述信息（对应 RagFlow progress_msg）
-     */
-    private String progressMsg;
 
     /**
      * 文档状态

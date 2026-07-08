@@ -4,10 +4,18 @@
 
     <resultMap id="BaseResultMap" type="com.example.dream.dal.po.KbDocumentPO">
         <id property="id" column="id" jdbcType="BIGINT"/>
+        <result property="kbId" column="kb_id" jdbcType="BIGINT"/>
+        <result property="parserId" column="parser_id" jdbcType="VARCHAR"/>
+        <result property="parserConfig" column="parser_config" jdbcType="VARCHAR"/>
+        <result property="type" column="type" jdbcType="VARCHAR"/>
         <result property="fileName" column="file_name" jdbcType="VARCHAR"/>
+        <result property="suffix" column="suffix" jdbcType="VARCHAR"/>
         <result property="objectKey" column="object_key" jdbcType="VARCHAR"/>
+        <result property="size" column="size" jdbcType="BIGINT"/>
+        <result property="run" column="run" jdbcType="INTEGER"/>
         <result property="status" column="status" jdbcType="VARCHAR"/>
         <result property="chunkCount" column="chunk_count" jdbcType="INTEGER"/>
+        <result property="tokenCount" column="token_count" jdbcType="INTEGER"/>
         <result property="errorMsg" column="error_msg" jdbcType="VARCHAR"/>
         <result property="deleteFlag" column="delete_flag" jdbcType="TINYINT"/>
         <result property="creator" column="creator" jdbcType="VARCHAR"/>

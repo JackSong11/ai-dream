@@ -27,31 +27,16 @@ public class KnowledgeBasePO extends BasePO {
     /**
      * 包含的文档总数
      */
-    private Integer doc_num;
+    private Integer docNum;
 
     /**
      * 总 Token 数量
      */
-    private Integer token_num;
+    private Integer tokenNum;
 
     /**
      * 切片/片段总数
      */
-    private Integer chunk_num;
-
-    /**
-     * 解析器 ID（对应 RagFlow parser_id）
-     */
-    private String parserId;
-
-    /**
-     * 解析器配置（JSON 字符串，对应 RagFlow parser_config）
-     */
-    private String parserConfig;
-
-    /**
-     * 处理流水线 ID（对应 RagFlow pipeline_id）
-     */
-    private String pipelineId;
+    private Integer chunkNum;
 
 }

@@ -28,7 +28,7 @@ DROP TABLE IF EXISTS `kb_document`;
 CREATE TABLE `kb_document`
 (
     `id`            bigint       NOT NULL AUTO_INCREMENT COMMENT '主键ID',
-    `kb_id`         varchar(64)           DEFAULT NULL COMMENT '所属知识库/数据集 ID',
+    `kb_id`         bigint                DEFAULT NULL COMMENT '所属知识库/数据集 ID',
     `parser_id`     varchar(32)           DEFAULT NULL COMMENT '解析器 ID(naive/picture/audio/presentation/email 等)',
     `parser_config` text COMMENT '解析器配置(JSON 字符串)',
     `type`          varchar(20)           DEFAULT NULL COMMENT '文档类型(doc/visual/aural/virtual/other 等)',
@@ -58,20 +58,20 @@ CREATE TABLE `kb_document`
 DROP TABLE IF EXISTS `kb_task`;
 CREATE TABLE `kb_task`
 (
-    `id`            bigint      NOT NULL AUTO_INCREMENT COMMENT '主键ID',
-    `doc_id`        varchar(64) NOT NULL COMMENT '所属文档 ID',
-    `from_page`     int                  DEFAULT '0' COMMENT '起始页码(从0开始)',
-    `to_page`       int                  DEFAULT '-1' COMMENT '结束页码(-1表示到末尾)',
-    `task_type`     varchar(32)          DEFAULT 'common' COMMENT '任务类型(common/raptor/graphrag)',
-    `progress`      decimal(6, 4)        DEFAULT '0.0000' COMMENT '任务进度(0~1)',
+    `id`            bigint    NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `doc_id`        bigint    NOT NULL COMMENT '所属文档 ID',
+    `from_page`     int                DEFAULT '0' COMMENT '起始页码(从0开始)',
+    `to_page`       int                DEFAULT '-1' COMMENT '结束页码(-1表示到末尾)',
+    `task_type`     varchar(32)        DEFAULT 'common' COMMENT '任务类型(common/raptor/graphrag)',
+    `progress`      decimal(6, 4)      DEFAULT '0.0000' COMMENT '任务进度(0~1)',
     `progress_msg`  text COMMENT '进度描述信息',
     `chunk_ids`     mediumtext COMMENT '写入文档存储后回填的分块ID列表(空格分隔)',
-    `retry_count`   int                  DEFAULT '0' COMMENT '重试次数',
-    `delete_flag`   tinyint     NOT NULL DEFAULT 0 COMMENT '逻辑删除字段 0:代表有效， 1:代表逻辑删除',
-    `creator`       varchar(20)          DEFAULT NULL COMMENT '创建人',
-    `editor`        varchar(20)          DEFAULT NULL COMMENT '修改人',
-    `created_time`  datetime             DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `modified_time` timestamp   NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
+    `retry_count`   int                DEFAULT '0' COMMENT '重试次数',
+    `delete_flag`   tinyint   NOT NULL DEFAULT 0 COMMENT '逻辑删除字段 0:代表有效， 1:代表逻辑删除',
+    `creator`       varchar(20)        DEFAULT NULL COMMENT '创建人',
+    `editor`        varchar(20)        DEFAULT NULL COMMENT '修改人',
+    `created_time`  datetime           DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `modified_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
     PRIMARY KEY (`id`),
     KEY `idx_doc_id` (`doc_id`)
 ) ENGINE = InnoDB
