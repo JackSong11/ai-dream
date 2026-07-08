@@ -6,6 +6,8 @@ import com.example.dream.integration.service.redis.RedisService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.jspecify.annotations.NonNull;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.stream.StreamListener;
 import org.springframework.stereotype.Component;
@@ -22,7 +24,7 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class DocTaskConsumer implements StreamListener<String, MapRecord<String, String, String>> {
+public class DocTaskConsumer implements StreamListener<String, @NonNull MapRecord<String, String, String>> {
 
     private final ObjectMapper objectMapper;
 
@@ -34,7 +36,7 @@ public class DocTaskConsumer implements StreamListener<String, MapRecord<String,
     public void onMessage(MapRecord<String, String, String> record) {
         String recordId = record.getId().getValue();
         String payload = record.getValue().get(DocTaskConstants.MSG_FIELD_PAYLOAD);
-        if (payload == null || payload.isEmpty()) {
+        if (StringUtils.isBlank(payload)) {
             log.warn("收到空消息, recordId={}, 直接 ack", recordId);
             ack(recordId);
             return;

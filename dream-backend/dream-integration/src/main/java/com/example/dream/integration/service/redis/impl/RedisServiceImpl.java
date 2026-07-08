@@ -142,17 +142,17 @@ public class RedisServiceImpl implements RedisService {
     @Override
     public void streamCreateGroupIfAbsent(String streamKey, String groupName) {
         try {
-            // Stream 不存在时先创建（XADD 一条占位再删，或用 MKSTREAM）。这里用 createGroup 的 MKSTREAM 语义。
-            if (Boolean.FALSE.equals(redisTemplate.hasKey(streamKey))) {
-                // 通过创建组并指定 $ 起点，Spring 的 createGroup 默认会 MKSTREAM
-                redisTemplate.opsForStream().createGroup(streamKey, ReadOffset.from("0-0"), groupName);
-                return;
-            }
+            // 直接创建。如果 Stream 不存在，底层 MKSTREAM 会自动创建 Stream
+            // 如果要消费历史数据用 ReadOffset.from("0-0")；如果只消费新数据用 ReadOffset.latest()
             redisTemplate.opsForStream().createGroup(streamKey, ReadOffset.from("0-0"), groupName);
         } catch (Exception e) {
-            // 组已存在（BUSYGROUP）视为正常
-            log.debug("streamCreateGroupIfAbsent: 组可能已存在, streamKey={}, group={}, msg={}",
-                    streamKey, groupName, e.getMessage());
+            // 捕获 BUSYGROUP 异常，如果是其他异常（如 Redis 连接断开）建议根据实际业务考虑是否向上抛出
+            if (e.getMessage() != null && e.getMessage().contains("BUSYGROUP")) {
+                log.debug("消费者组已存在，无需重复创建: streamKey={}, group={}", streamKey, groupName);
+            } else {
+                log.error("创建消费者组失败: streamKey={}, group={}", streamKey, groupName, e);
+                throw e; // 如果是其他网络或语法错误，建议抛出
+            }
         }
     }
 

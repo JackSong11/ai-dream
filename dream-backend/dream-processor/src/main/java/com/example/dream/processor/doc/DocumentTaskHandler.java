@@ -14,6 +14,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.example.dream.dal.po.KnowledgeBasePO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.tika.Tika;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.stereotype.Component;
@@ -171,7 +172,7 @@ public class DocumentTaskHandler {
         int vectorSize = probe.length;
 
         // 创建带 q_{dim}_vec(dense_vector) 的索引（对应 RagFlow init_kb -> create_idx）
-        String index = DocTaskConstants.indexName(msg.getTenantId());
+        String index = DocTaskConstants.indexName(msg.getUserId());
         elasticsearchService.createChunkIndexIfAbsent(index, vectorSize);
 
         markProgress(msg, PROGRESS_INIT_KB, "已绑定嵌入模型(维度=" + vectorSize + ")，索引就绪");
@@ -193,7 +194,7 @@ public class DocumentTaskHandler {
         }
         markProgress(msg, PROGRESS_TEXT_EXTRACTED, "文档文本提取完成");
 
-        if (text == null || text.isBlank()) {
+        if (StringUtils.isBlank(text)) {
             return new ArrayList<>();
         }
 
@@ -205,7 +206,7 @@ public class DocumentTaskHandler {
         int position = 0;
         for (String seg : segments) {
             String content = seg.trim();
-            if (content.isEmpty()) {
+            if (StringUtils.isBlank(content)) {
                 continue;
             }
             Map<String, Object> ck = new LinkedHashMap<>();
@@ -234,16 +235,23 @@ public class DocumentTaskHandler {
         int windowChars = CHUNK_TOKEN_NUM * CHARS_PER_TOKEN;
         List<String> result = new ArrayList<>();
         // 先按空行/换行归并，再按窗口切
+        // 1. 文本标准化（数据清洗）
+        // replaceAll("\\r\\n", "\n")：将 Windows 系统的换行符（\r\n）统一替换为 Linux 系统的换行符（\n）。
+        // replaceAll("\\n{2,}", "\n")：将连续两个或更多的空行/换行合并为一个。目的是去除多余的空白，防止切片中出现大量无意义的空行，导致信息密度过低。
         String normalized = text.replaceAll("\\r\\n", "\n").replaceAll("\\n{2,}", "\n");
         int len = normalized.length();
         int start = 0;
+        // 2. 滑动窗口切片主循环
         while (start < len) {
+            // 使用 start 指针记录当前切片的起始位置。
+            // end 默认设为 start + 256（即一个窗口的长度）。如果剩余文本不足 256 字符，则直接切到文本末尾（len）。
             int end = Math.min(start + windowChars, len);
             // 尝试在窗口末尾附近的句子边界断开，避免切断句子
             if (end < len) {
                 int boundary = findBoundary(normalized, start, end);
+                // 为什么要做这个判断？ 如果严格按照 256 个字符硬编码切断，很容易把一个完整的句子（甚至一个词）从中间切开（例如：“...大语言模” | “型非常智能...”），这会严重破坏语义。
                 if (boundary > start) {
-                    end = boundary;
+                    end = boundary; // 如果找到了合适的句子边界，就把终点提前到边界处
                 }
             }
             result.add(normalized.substring(start, end));
@@ -254,21 +262,34 @@ public class DocumentTaskHandler {
 
     /**
      * 在 [start, end) 范围内从后向前寻找句子/标点边界，找不到则返回 end。
+     * 它的主要功能是在指定的字符窗口内，从后往前寻找一个合适的“断句点”，以确保切片尽量在句子的末尾断开，而不是粗暴地把一句话斩断。
      */
     private int findBoundary(String text, int start, int end) {
+        // 1. 定义分隔符（断句标点）
+        // 这里定义了哪些字符可以被视为一个句子的结束。包含了中英文的常见句尾标点（句号、感叹号、问号、分号）以及换行符 \n。
         String delimiters = "。！？；\n.!?;";
+        // 2. 倒序扫描机制
+        // 为什么从后往前（end - 1 到 start）？ 因为我们的目标是让每个切片尽量装满（接近容量上限 end）。从后往前找，能找到最接近容量上限的那个句子边界，从而最大化利用切片空间。
         for (int i = end - 1; i > start; i--) {
+            // delimiters.indexOf(...) >= 0 表示如果这个字符在分隔符字符串中存在，说明找到了一个句子结尾。
+            // int indexOf(int ch) 是 String 类的另一个方法，用来查找某个字符在当前字符串中第一次出现的位置（索引）。
+            // 如果找到了，返回该字符在字符串中的下标（从 0 开始）。如果没找到，统一返回 -1。
             if (delimiters.indexOf(text.charAt(i)) >= 0) {
                 return i + 1;
+                // 返回值为什么是 i + 1？ 因为 Java 的 substring(start, end) 是左闭右开的（包含 start，不包含 end）。
+                // 如果我们找到了句号，我们希望把句号包含在当前的切片里。返回 i + 1 作为下一次截取的 end，刚好能把位置 i 的标点符号包进来。
             }
         }
+        // 4. 兜底处理
+        // 如果从 end - 1 一直回溯到 start 都没有找到任何标点符号（说明这是一句极长的长难句，超过了单个切片的最大长度），为了防止程序卡死或切出空文本，直接返回原始的 end。
+        // 这意味着此时无法按语义断句，只能硬生生截断。
         return end;
     }
 
     /**
      * 生成分块 ID：内容 + docId + 位置 的稳定哈希（十六进制）。
      */
-    private String chunkId(String content, String docId, int position) {
+    private String chunkId(String content, Long docId, int position) {
         long h = 1125899906842597L;
         String base = content + "|" + docId + "|" + position;
         for (int i = 0; i < base.length(); i++) {
@@ -290,10 +311,11 @@ public class DocumentTaskHandler {
         for (Map<String, Object> ck : chunks) {
             String c = String.valueOf(ck.get(FIELD_CONTENT));
             // 空白内容用占位符，避免嵌入模型收到空输入（对应 RagFlow "None" 占位）
-            contents.add(c == null || c.isBlank() ? EMPTY_CONTENT_PLACEHOLDER : c);
+            contents.add(StringUtils.isBlank(c) ? EMPTY_CONTENT_PLACEHOLDER : c);
         }
 
         // 批量生成向量（Spring AI 支持一次传入多文本）
+        // todo：这里看看底层是怎么做的
         List<float[]> vectors = embeddingModel.embed(contents);
         if (vectors.size() != chunks.size()) {
             throw new IllegalStateException(
@@ -304,6 +326,7 @@ public class DocumentTaskHandler {
         for (int i = 0; i < chunks.size(); i++) {
             float[] vec = vectors.get(i);
             // ES dense_vector 接受 float 列表
+            // todo 这里为什么要把float[] vec 转成List<Float>
             List<Float> vecList = new ArrayList<>(vec.length);
             for (float v : vec) {
                 vecList.add(v);
@@ -322,7 +345,7 @@ public class DocumentTaskHandler {
      * 对应 RagFlow insert_chunks() -> docStoreConn.insert + TaskService.update_chunk_ids。
      */
     private void insertChunks(DocTaskMessage msg, List<Map<String, Object>> chunks) {
-        String index = DocTaskConstants.indexName(msg.getTenantId());
+        String index = DocTaskConstants.indexName(msg.getUserId());
         List<String> allChunkIds = new ArrayList<>(chunks.size());
 
         for (int b = 0; b < chunks.size(); b += DOC_BULK_SIZE) {
@@ -345,7 +368,7 @@ public class DocumentTaskHandler {
 
         // 回填 task.chunk_ids（对应 RagFlow update_chunk_ids，空格分隔）
         KbTaskPO taskUpdate = new KbTaskPO();
-        taskUpdate.setId(Long.valueOf(msg.getTaskId()));
+        taskUpdate.setId(msg.getTaskId());
         taskUpdate.setChunkIds(String.join(" ", allChunkIds));
         kbTaskCoreService.updateById(taskUpdate);
     }
@@ -356,16 +379,10 @@ public class DocumentTaskHandler {
      */
     private void markProgress(DocTaskMessage msg, BigDecimal progress, String message) {
         KbTaskPO task = new KbTaskPO();
-        task.setId(Long.valueOf(msg.getTaskId()));
+        task.setId(msg.getTaskId());
         task.setProgress(progress);
         task.setProgressMsg(message);
         kbTaskCoreService.updateById(task);
-
-        KbDocumentPO doc = new KbDocumentPO();
-        doc.setId(Long.valueOf(msg.getDocId()));
-        doc.setProgress(progress);
-        doc.setProgressMsg(message);
-        kbDocumentCoreService.updateById(doc);
     }
 
     /**
@@ -375,12 +392,11 @@ public class DocumentTaskHandler {
      * ingest 重跑前已清零文档统计，因此累加结果即为最终值，且天然支持一个文档拆分为多个 task 的场景。</p>
      */
     private void finishDoc(DocTaskMessage msg, int chunkCount, int tokenCount) {
-        Long docId = Long.valueOf(msg.getDocId());
+        Long docId = msg.getDocId();
         // 文档：run=DONE、progress=1，chunk/token 原子累加（对应 cls.model.chunk_num + chunk_num）
         LambdaUpdateWrapper<KbDocumentPO> docUpdate = new LambdaUpdateWrapper<KbDocumentPO>()
                 .eq(KbDocumentPO::getId, docId)
                 .set(KbDocumentPO::getRun, TaskStatusEnum.DONE.getValue())
-                .set(KbDocumentPO::getProgress, BigDecimal.ONE)
                 .setSql("chunk_count = IFNULL(chunk_count, 0) + " + chunkCount)
                 .setSql("token_count = IFNULL(token_count, 0) + " + tokenCount);
         kbDocumentCoreService.update(docUpdate);
@@ -388,7 +404,7 @@ public class DocumentTaskHandler {
         // 知识库：chunk_num / token_num 原子累加（对应 Knowledgebase.update(chunk_num + chunk_num)）
         if (msg.getKbId() != null) {
             LambdaUpdateWrapper<KnowledgeBasePO> kbUpdate = new LambdaUpdateWrapper<KnowledgeBasePO>()
-                    .eq(KnowledgeBasePO::getId, Long.valueOf(msg.getKbId()))
+                    .eq(KnowledgeBasePO::getId, msg.getKbId())
                     .setSql("chunk_num = IFNULL(chunk_num, 0) + " + chunkCount)
                     .setSql("token_num = IFNULL(token_num, 0) + " + tokenCount);
             knowledgeBaseCoreService.update(kbUpdate);
@@ -401,15 +417,13 @@ public class DocumentTaskHandler {
     private void failDoc(DocTaskMessage msg, String errorMsg) {
         try {
             KbDocumentPO doc = new KbDocumentPO();
-            doc.setId(Long.valueOf(msg.getDocId()));
+            doc.setId(msg.getDocId());
             doc.setRun(TaskStatusEnum.FAIL.getValue());
-            doc.setProgress(PROGRESS_FAIL);
-            doc.setProgressMsg(errorMsg);
             doc.setErrorMsg(errorMsg);
             kbDocumentCoreService.updateById(doc);
 
             KbTaskPO task = new KbTaskPO();
-            task.setId(Long.valueOf(msg.getTaskId()));
+            task.setId(msg.getTaskId());
             task.setProgress(PROGRESS_FAIL);
             task.setProgressMsg(errorMsg);
             kbTaskCoreService.updateById(task);

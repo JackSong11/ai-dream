@@ -7,6 +7,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.NonNull;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.stream.Consumer;
 import org.springframework.data.redis.connection.stream.MapRecord;
@@ -48,7 +49,7 @@ public class DocTaskStreamConfig {
      */
     private final String consumerName = "dream_consumer_" + UUID.randomUUID().toString().substring(0, 8);
 
-    private StreamMessageListenerContainer<String, MapRecord<String, String, String>> container;
+    private StreamMessageListenerContainer<String, @NonNull MapRecord<String, String, String>> container;
 
     private Subscription subscription;
 
@@ -58,7 +59,7 @@ public class DocTaskStreamConfig {
         redisService.streamCreateGroupIfAbsent(DocTaskConstants.SVR_QUEUE, DocTaskConstants.SVR_CONSUMER_GROUP);
 
         // 2) 构建监听容器：轮询超时 2s，每次最多取 1 条，手动 ack
-        StreamMessageListenerContainer.StreamMessageListenerContainerOptions<String, MapRecord<String, String, String>> options =
+        StreamMessageListenerContainer.StreamMessageListenerContainerOptions<String, @NonNull MapRecord<String, String, String>> options =
                 StreamMessageListenerContainer.StreamMessageListenerContainerOptions.builder()
                         .pollTimeout(Duration.ofSeconds(2))
                         .batchSize(1)

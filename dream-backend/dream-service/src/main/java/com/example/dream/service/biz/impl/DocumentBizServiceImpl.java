@@ -1,13 +1,13 @@
 package com.example.dream.service.biz.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.example.dream.common.constant.DocTaskConstants;
 import com.example.dream.common.dto.DocTaskMessage;
 import com.example.dream.common.enums.base.ResCodeEnum;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.example.dream.common.enums.document.FileTypeEnum;
 import com.example.dream.common.enums.document.ParserTypeEnum;
@@ -203,6 +203,7 @@ public class DocumentBizServiceImpl implements DocumentBizService {
     private KbDocumentPO buildDocument(Long kbId, String filename, FileTypeEnum fileType,
                                        ParserTypeEnum parserType, String objectKey, long size) {
         KbDocumentPO doc = new KbDocumentPO();
+        doc.setId(IdWorker.getId());
         doc.setKbId(kbId);
         doc.setParserId(parserType.getCode());
         doc.setType(fileType.getCode());
@@ -322,10 +323,8 @@ public class DocumentBizServiceImpl implements DocumentBizService {
         KbDocumentPO info = new KbDocumentPO();
         info.setId(doc.getId());
         info.setRun(run);
-        info.setProgress(BigDecimal.ZERO);
         if (rerunWithDelete) {
             // 对应 Python: info["progress_msg"]=""; info["chunk_num"]=0; info["token_num"]=0
-            info.setProgressMsg("");
             info.setChunkCount(0);
             info.setTokenCount(0);
         }
@@ -430,16 +429,8 @@ public class DocumentBizServiceImpl implements DocumentBizService {
         try {
             // 解析 doc 原有 parser_config（为空则视为空对象，保留其余字段）
             ObjectNode docConfig = readAsObjectNode(doc.getParserConfig());
-            ObjectNode kbConfig = readAsObjectNode(kb.getParserConfig());
 
-            // 对应 Python: llm_id = kb.parser_config.get("llm_id")（缺省为 null）
-            docConfig.set("llm_id", kbConfig.has("llm_id") ? kbConfig.get("llm_id") : NullNode.getInstance());
-            // 对应 Python: enable_metadata = kb.parser_config.get("enable_metadata", False)
-            docConfig.put("enable_metadata",
-                    kbConfig.has("enable_metadata") && kbConfig.get("enable_metadata").asBoolean(false));
-            // 对应 Python: metadata = kb.parser_config.get("metadata", {})
-            docConfig.set("metadata",
-                    kbConfig.has("metadata") ? kbConfig.get("metadata") : OBJECT_MAPPER.createObjectNode());
+            // 这里有一段把 kb.getParserConfig() 里面一些字段，set到docConfig，我删了
 
             String merged = OBJECT_MAPPER.writeValueAsString(docConfig);
             KbDocumentPO update = new KbDocumentPO();
@@ -475,6 +466,7 @@ public class DocumentBizServiceImpl implements DocumentBizService {
     private void runDocument(String userId, KbDocumentPO doc) {
         // 1) 创建解析任务记录（对应 RagFlow queue_tasks -> Task 表插入）
         KbTaskPO task = new KbTaskPO();
+        task.setId(IdWorker.getId());
         task.setDocId(doc.getId());
         task.setFromPage(TASK_FROM_PAGE);
         task.setToPage(TASK_TO_PAGE);

@@ -162,9 +162,9 @@ public interface RedisService {
      * 向 Stream 追加一条消息（XADD），用作简易 MQ 的生产端。
      * <p>对应 RagFlow 中 REDIS_CONN.queue_product 的语义。</p>
      *
-     * @param streamKey Stream 键（队列名）
-     * @param message   消息内容（field-value 结构）
-     * @return 生成的消息 ID（RecordId 字符串形式），失败返回 null
+     * @param streamKey Stream 键（队列名）。streamKey: Redis 中 Stream 的键名（类似于 MQ 的 Topic 名字）。
+     * @param message   消息内容（field-value 结构）。message: 要发送的消息体。Redis Stream 的消息本质上是一个 Key-Value 组成的 Map，所以这里用 Map<String, String> 来表示
+     * @return 生成的消息 ID（RecordId 字符串形式），返回值 String: 返回 Redis 自动生成的、或者指定的 消息 ID（例如 1719920001234-0）。如果失败则返回 null。
      */
     String streamAdd(String streamKey, Map<String, String> message);
 
