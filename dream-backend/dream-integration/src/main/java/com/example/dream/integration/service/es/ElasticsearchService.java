@@ -41,6 +41,17 @@ public interface ElasticsearchService {
     // ==================== 文档操作 ====================
 
     /**
+     * 创建用于存储文档分块的知识库索引（若已存在则跳过）。
+     * <p>对应 RagFlow docStoreConn.create_idx：为向量字段 q_{vectorSize}_vec
+     * 建立 dense_vector 映射（启用 cosine 相似度检索）。</p>
+     *
+     * @param index      索引名
+     * @param vectorSize 向量维度
+     * @return 是否创建成功（已存在也返回 true）
+     */
+    boolean createChunkIndexIfAbsent(String index, int vectorSize);
+
+    /**
      * 新增或全量覆盖文档。
      *
      * @param index    索引名
@@ -81,6 +92,17 @@ public interface ElasticsearchService {
      * @return 是否删除成功
      */
     boolean deleteDocument(String index, String id);
+
+    /**
+     * 根据字段精确匹配（term）批量删除文档。
+     * <p>对应 RagFlow docStoreConn.delete({field: value}, index, kb_id)。</p>
+     *
+     * @param index 索引名
+     * @param field 字段名
+     * @param value 字段值
+     * @return 删除的文档数量
+     */
+    long deleteByTerm(String index, String field, String value);
 
     /**
      * 批量新增文档。

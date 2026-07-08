@@ -18,6 +18,11 @@
             <groupId>com.example.dream</groupId>
             <artifactId>dream-app-web</artifactId>
         </dependency>
+        <!-- 异步处理层：文档解析任务消费者随应用启动 -->
+        <dependency>
+            <groupId>com.example.dream</groupId>
+            <artifactId>dream-processor</artifactId>
+        </dependency>
         <!-- 测试依赖，用于集成测试验证 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

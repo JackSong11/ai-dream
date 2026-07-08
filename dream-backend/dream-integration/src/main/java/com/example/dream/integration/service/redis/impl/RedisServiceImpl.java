@@ -3,6 +3,10 @@ package com.example.dream.integration.service.redis.impl;
 import com.example.dream.integration.service.redis.RedisService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.connection.stream.ReadOffset;
+import org.springframework.data.redis.connection.stream.RecordId;
+import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -119,5 +123,46 @@ public class RedisServiceImpl implements RedisService {
     @Override
     public Long decrement(String key, long delta) {
         return redisTemplate.opsForValue().decrement(key, delta);
+    }
+
+    // ==================== Stream 消息队列操作 ====================
+
+    @Override
+    public String streamAdd(String streamKey, Map<String, String> message) {
+        try {
+            MapRecord<String, String, String> record = StreamRecords.mapBacked(message).withStreamKey(streamKey);
+            RecordId recordId = redisTemplate.opsForStream().add(record);
+            return recordId == null ? null : recordId.getValue();
+        } catch (Exception e) {
+            log.error("streamAdd 失败, streamKey={}", streamKey, e);
+            return null;
+        }
+    }
+
+    @Override
+    public void streamCreateGroupIfAbsent(String streamKey, String groupName) {
+        try {
+            // Stream 不存在时先创建（XADD 一条占位再删，或用 MKSTREAM）。这里用 createGroup 的 MKSTREAM 语义。
+            if (Boolean.FALSE.equals(redisTemplate.hasKey(streamKey))) {
+                // 通过创建组并指定 $ 起点，Spring 的 createGroup 默认会 MKSTREAM
+                redisTemplate.opsForStream().createGroup(streamKey, ReadOffset.from("0-0"), groupName);
+                return;
+            }
+            redisTemplate.opsForStream().createGroup(streamKey, ReadOffset.from("0-0"), groupName);
+        } catch (Exception e) {
+            // 组已存在（BUSYGROUP）视为正常
+            log.debug("streamCreateGroupIfAbsent: 组可能已存在, streamKey={}, group={}, msg={}",
+                    streamKey, groupName, e.getMessage());
+        }
+    }
+
+    @Override
+    public Long streamAck(String streamKey, String groupName, String recordId) {
+        try {
+            return redisTemplate.opsForStream().acknowledge(streamKey, groupName, recordId);
+        } catch (Exception e) {
+            log.error("streamAck 失败, streamKey={}, group={}, recordId={}", streamKey, groupName, recordId, e);
+            return 0L;
+        }
     }
 }

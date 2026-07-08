@@ -60,6 +60,56 @@ public class ElasticsearchServiceImpl implements ElasticsearchService {
         }
     }
 
+    @Override
+    public boolean createChunkIndexIfAbsent(String index, int vectorSize) {
+        try {
+            if (indexExists(index)) {
+                return true;
+            }
+            // 为分块文档定义映射：向量字段 q_{dim}_vec 为 dense_vector（cosine 相似度）
+            String vectorField = "q_" + vectorSize + "_vec";
+            String mappingJson = """
+                    {
+                      "dynamic": true,
+                      "properties": {
+                        "doc_id":   { "type": "keyword" },
+                        "kb_id":    { "type": "keyword" },
+                        "docnm_kwd":{ "type": "keyword" },
+                        "title_tks":{ "type": "text" },
+                        "content_with_weight": { "type": "text" },
+                        "content_ltks":        { "type": "text" },
+                        "important_kwd":       { "type": "keyword" },
+                        "available_int":       { "type": "integer" },
+                        "create_time":         { "type": "keyword" },
+                        "create_timestamp_flt":{ "type": "double" },
+                        "%s": {
+                          "type": "dense_vector",
+                          "dims": %d,
+                          "index": true,
+                          "similarity": "cosine"
+                        }
+                      }
+                    }
+                    """.formatted(vectorField, vectorSize);
+
+            try (var mappingStream = new java.io.ByteArrayInputStream(
+                    mappingJson.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
+                boolean ack = client.indices().create(c -> c
+                        .index(index)
+                        .withJson(mappingStream)).acknowledged();
+                log.info("创建分块索引 index={}, vectorField={}, dims={}, ack={}",
+                        index, vectorField, vectorSize, ack);
+                return ack;
+            }
+        } catch (Exception ex) {
+            // 并发下可能已被其他线程创建，二次确认存在即视为成功
+            if (indexExists(index)) {
+                return true;
+            }
+            throw new RuntimeException("创建分块索引失败: " + index, ex);
+        }
+    }
+
     // ==================== 文档操作 ====================
 
     @Override
@@ -106,6 +156,18 @@ public class ElasticsearchServiceImpl implements ElasticsearchService {
             return response.result() == co.elastic.clients.elasticsearch._types.Result.Deleted;
         } catch (IOException ex) {
             throw new RuntimeException("删除文档失败: index=" + index + ", id=" + id, ex);
+        }
+    }
+
+    @Override
+    public long deleteByTerm(String index, String field, String value) {
+        try {
+            Query query = Query.of(q -> q.term(t -> t.field(field).value(value)));
+            var response = client.deleteByQuery(d -> d.index(index).query(query));
+            Long deleted = response.deleted();
+            return deleted == null ? 0L : deleted;
+        } catch (IOException ex) {
+            throw new RuntimeException("按 term 删除文档失败: index=" + index + ", field=" + field, ex);
         }
     }
 

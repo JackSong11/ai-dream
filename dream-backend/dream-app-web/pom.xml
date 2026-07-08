@@ -18,6 +18,12 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc</artifactId>
         </dependency>
+        <!-- Spring Boot 4.x 中 spring-boot-starter-webmvc 不再传递 JSON 支持，
+             需显式引入以激活 JacksonAutoConfiguration，提供 ObjectMapper bean -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-json</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.example.dream</groupId>
             <artifactId>dream-service</artifactId>

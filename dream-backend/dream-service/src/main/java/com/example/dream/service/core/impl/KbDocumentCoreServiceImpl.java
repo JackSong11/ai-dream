@@ -10,7 +10,7 @@ import org.springframework.stereotype.Service;
  * 文档表 Service 实现类
  */
 @Service
-public class KbDocumentServiceImpl extends ServiceImpl<KbDocumentMapper, KbDocumentPO>
+public class KbDocumentCoreServiceImpl extends ServiceImpl<KbDocumentMapper, KbDocumentPO>
         implements KbDocumentCoreService {
 
 }

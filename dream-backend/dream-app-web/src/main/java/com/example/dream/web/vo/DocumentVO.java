@@ -12,7 +12,7 @@ public class DocumentVO {
     /**
      * 文档 ID
      */
-    private String id;
+    private Long id;
 
     /**
      * 文档名称
@@ -22,7 +22,7 @@ public class DocumentVO {
     /**
      * 所属数据集 ID
      */
-    private String datasetId;
+    private Long kdId;
 
     /**
      * 分块方式 / 解析器
@@ -62,5 +62,5 @@ public class DocumentVO {
     /**
      * 处理状态（"0"=未开始）
      */
-    private String run;
+    private int run;
 }

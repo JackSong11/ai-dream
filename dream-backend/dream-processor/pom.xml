@@ -18,6 +18,27 @@
             <groupId>com.example.dream</groupId>
             <artifactId>dream-service</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+        <!-- Apache Tika：从 PDF/Word/PPT 等多格式文档提取纯文本 -->
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-core</artifactId>
+            <version>3.2.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-parsers-standard-package</artifactId>
+            <version>3.2.2</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.github.junrar</groupId>
+                    <artifactId>junrar</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
     </dependencies>
 
 </project>

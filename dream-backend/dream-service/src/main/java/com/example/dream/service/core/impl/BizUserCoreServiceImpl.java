@@ -12,7 +12,7 @@ import org.springframework.util.StringUtils;
  * 用户表 Service 实现类
  */
 @Service
-public class BizUserServiceImpl extends ServiceImpl<BizUserMapper, BizUserPO>
+public class BizUserCoreServiceImpl extends ServiceImpl<BizUserMapper, BizUserPO>
         implements BizUserCoreService {
 
     @Override

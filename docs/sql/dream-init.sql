@@ -1,4 +1,27 @@
 -- ----------------------------
+-- Table structure for knowledge_base
+-- ----------------------------
+DROP TABLE IF EXISTS `knowledge_base`;
+CREATE TABLE `knowledge_base`
+(
+    `id`            bigint       NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `name`          varchar(128) NOT NULL COMMENT '知识库名称',
+    `description`   text COMMENT '知识库描述',
+    `doc_num`       int                   DEFAULT 0 COMMENT '包含的文档总数',
+    `token_num`     int                   DEFAULT 0 COMMENT '总 Token 数量',
+    `chunk_num`     int                   DEFAULT 0 COMMENT '切片/片段总数',
+    `delete_flag`   tinyint      NOT NULL DEFAULT 0 COMMENT '逻辑删除字段 0:代表有效， 1:代表逻辑删除',
+    `creator`       varchar(20)           DEFAULT NULL COMMENT '创建人',
+    `editor`        varchar(20)           DEFAULT NULL COMMENT '修改人',
+    `created_time`  datetime              DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `modified_time` timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
+    PRIMARY KEY (`id`)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_bin COMMENT = '知识库元数据表'
+  ROW_FORMAT = Dynamic;
+
+-- ----------------------------
 -- Table structure for kb_document
 -- ----------------------------
 DROP TABLE IF EXISTS `kb_document`;
@@ -13,7 +36,7 @@ CREATE TABLE `kb_document`
     `suffix`        varchar(32)           DEFAULT NULL COMMENT '文件后缀(不含 ".")',
     `object_key`    varchar(500) NOT NULL COMMENT '对象存储中的位置/对象名',
     `size`          bigint                DEFAULT '0' COMMENT '文件大小,字节',
-    `run`           varchar(20)           DEFAULT NULL COMMENT '运行/处理状态(0=未开始 UNSTART)',
+    `run`           int                   DEFAULT NULL COMMENT '运行/处理状态(0=未开始 UNSTART)',
     `status`        varchar(20)  NOT NULL COMMENT '文档状态',
     `chunk_count`   int                   DEFAULT '0' COMMENT '分块数量',
     `token_count`   int                   DEFAULT '0' COMMENT 'token 数量',
@@ -27,6 +50,33 @@ CREATE TABLE `kb_document`
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_bin COMMENT = '文档表'
+  ROW_FORMAT = Dynamic;
+
+-- ----------------------------
+-- Table structure for kb_task
+-- ----------------------------
+DROP TABLE IF EXISTS `kb_task`;
+CREATE TABLE `kb_task`
+(
+    `id`            bigint      NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `doc_id`        varchar(64) NOT NULL COMMENT '所属文档 ID',
+    `from_page`     int                  DEFAULT '0' COMMENT '起始页码(从0开始)',
+    `to_page`       int                  DEFAULT '-1' COMMENT '结束页码(-1表示到末尾)',
+    `task_type`     varchar(32)          DEFAULT 'common' COMMENT '任务类型(common/raptor/graphrag)',
+    `progress`      decimal(6, 4)        DEFAULT '0.0000' COMMENT '任务进度(0~1)',
+    `progress_msg`  text COMMENT '进度描述信息',
+    `chunk_ids`     mediumtext COMMENT '写入文档存储后回填的分块ID列表(空格分隔)',
+    `retry_count`   int                  DEFAULT '0' COMMENT '重试次数',
+    `delete_flag`   tinyint     NOT NULL DEFAULT 0 COMMENT '逻辑删除字段 0:代表有效， 1:代表逻辑删除',
+    `creator`       varchar(20)          DEFAULT NULL COMMENT '创建人',
+    `editor`        varchar(20)          DEFAULT NULL COMMENT '修改人',
+    `created_time`  datetime             DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `modified_time` timestamp   NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_doc_id` (`doc_id`)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_bin COMMENT = '文档解析任务表'
   ROW_FORMAT = Dynamic;
 
 CREATE TABLE `biz_user`

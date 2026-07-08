@@ -12,7 +12,7 @@ public class DocumentBO {
     /**
      * 文档 ID（对应 RagFlow id）
      */
-    private String id;
+    private Long id;
 
     /**
      * 文档名称（对应 RagFlow name）
@@ -22,7 +22,7 @@ public class DocumentBO {
     /**
      * 所属数据集 ID（对应 RagFlow dataset_id / kb_id）
      */
-    private String datasetId;
+    private Long kbId;
 
     /**
      * 分块方式 / 解析器（对应 RagFlow chunk_method / parser_id）
@@ -62,5 +62,5 @@ public class DocumentBO {
     /**
      * 处理状态（对应 RagFlow run，"0"=未开始）
      */
-    private String run;
+    private int run;
 }

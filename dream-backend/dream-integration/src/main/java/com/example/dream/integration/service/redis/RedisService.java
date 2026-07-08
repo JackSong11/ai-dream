@@ -155,4 +155,35 @@ public interface RedisService {
      * @return 递减后的值
      */
     Long decrement(String key, long delta);
+
+    // ==================== Stream 消息队列操作 ====================
+
+    /**
+     * 向 Stream 追加一条消息（XADD），用作简易 MQ 的生产端。
+     * <p>对应 RagFlow 中 REDIS_CONN.queue_product 的语义。</p>
+     *
+     * @param streamKey Stream 键（队列名）
+     * @param message   消息内容（field-value 结构）
+     * @return 生成的消息 ID（RecordId 字符串形式），失败返回 null
+     */
+    String streamAdd(String streamKey, Map<String, String> message);
+
+    /**
+     * 确保消费者组存在（若不存在则创建，从头开始消费）。
+     * <p>幂等：组已存在时静默返回。</p>
+     *
+     * @param streamKey Stream 键（队列名）
+     * @param groupName 消费者组名
+     */
+    void streamCreateGroupIfAbsent(String streamKey, String groupName);
+
+    /**
+     * 确认消息已处理完成（XACK）。
+     *
+     * @param streamKey Stream 键（队列名）
+     * @param groupName 消费者组名
+     * @param recordId  消息 ID
+     * @return 确认成功的消息数量
+     */
+    Long streamAck(String streamKey, String groupName, String recordId);
 }
