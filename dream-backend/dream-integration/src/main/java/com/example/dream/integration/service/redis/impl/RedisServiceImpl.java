@@ -147,13 +147,29 @@ public class RedisServiceImpl implements RedisService {
             redisTemplate.opsForStream().createGroup(streamKey, ReadOffset.from("0-0"), groupName);
         } catch (Exception e) {
             // 捕获 BUSYGROUP 异常，如果是其他异常（如 Redis 连接断开）建议根据实际业务考虑是否向上抛出
-            if (e.getMessage() != null && e.getMessage().contains("BUSYGROUP")) {
+            // 注意：Spring 会将底层的 RedisBusyException 包装成 RedisSystemException，
+            // 其顶层 message 为 "Error in execution"，不含 BUSYGROUP，因此必须遍历整个异常链判断
+            if (containsBusyGroup(e)) {
                 log.debug("消费者组已存在，无需重复创建: streamKey={}, group={}", streamKey, groupName);
             } else {
                 log.error("创建消费者组失败: streamKey={}, group={}", streamKey, groupName, e);
                 throw e; // 如果是其他网络或语法错误，建议抛出
             }
         }
+    }
+
+    /**
+     * 遍历整个异常链，判断是否为 Redis 消费组已存在（BUSYGROUP）异常
+     */
+    private boolean containsBusyGroup(Throwable e) {
+        Throwable cause = e;
+        while (cause != null) {
+            if (cause.getMessage() != null && cause.getMessage().contains("BUSYGROUP")) {
+                return true;
+            }
+            cause = cause.getCause();
+        }
+        return false;
     }
 
     @Override
