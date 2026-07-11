@@ -14,16 +14,20 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 
+import java.io.InputStream;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -79,6 +83,11 @@ public class AsyncChatServiceImpl implements AsyncChatService {
      * 去除 ##数字$$ 标记的正则（对应 Python re.sub(r"##\d+\$\$", "", ...)）。
      */
     private static final Pattern DOC_MARKER_PATTERN = Pattern.compile("##\\d+\\$\\$");
+
+    /**
+     * 提示词模板缓存（对应 RagFlow rag.prompts.template._loaded_prompts）。
+     */
+    private static final Map<String, String> PROMPT_CACHE = new ConcurrentHashMap<>();
 
     /**
      * 执行一轮对话生成（对应 Python: async def async_chat(dialog, messages, stream=True, **kwargs)）。
@@ -198,7 +207,7 @@ public class AsyncChatServiceImpl implements AsyncChatService {
         // 作用：它会把当前对话的上下文（messages）传给 LLM，让 LLM 把带有指代消解（比如“它”、“那个”）或省略的最新问题，重写为一个独立、完整的、没有歧义的问题。
         if (questions.size() > 1 && getBool(promptConfig.get("refine_multiturn"), false)) {
             questions = new ArrayList<>(List.of(
-                    fullQuestion(dialog.getUserId(), dialog.getLlmId(), messages)));
+                    fullQuestion(messages)));
         } else {
             // 如果不满足条件（例如：关闭了精炼功能，或者只有一轮对话）。
             // 作用：切片操作 [-1:] 表示只保留最后一条问题（即用户最新输入的那句话），直接丢弃之前的历史问题。
@@ -677,11 +686,121 @@ public class AsyncChatServiceImpl implements AsyncChatService {
     }
 
     /**
-     * TODO 对应 full_question：多轮对话问题改写。
+     * 多轮对话问题改写（百分百还原 RagFlow rag.prompts.generator.full_question）。
+     *
+     * <p>对应 Python：async def full_question(tenant_id=None, llm_id=None, messages=[], language=None, chat_mdl=None)。
+     * 调用点未传 language，等价 Python language=None（模板走"与原问题同语言"分支）。RagFlow 中当 chat_mdl 为空时会依据
+     * tenant_id/llm_id 解析模型（image2text 优先），当前项目统一使用 Spring AI 自动装配的 {@link #chatModel}，
+     * 因此 tenantId/llmId 仅保留以对齐签名。</p>
+     *
+     * <p>流程：拼接 user/assistant 会话 -> 计算 today/yesterday/tomorrow -> 渲染 FULL_QUESTION_PROMPT_TEMPLATE
+     * -> LLM 生成 -> 去除 &lt;/think&gt; 及其之前内容 -> 命中 **ERROR** 则回退到 messages[-1].content。</p>
      */
-    private String fullQuestion(String tenantId, String llmId, List<ChatMessageBO> messages) {
-        // TODO 接入多轮问题改写
-        return messages.getLast().getContent();
+    private String fullQuestion(List<ChatMessageBO> messages) {
+        // 对应 Python：conv = []；for m in messages: if role in ["user","assistant"]: conv.append("ROLE: content")
+        List<String> conv = new ArrayList<>();
+        // 对话历史扁平化处理
+        /*
+          messages = [
+              {"role": "user", "content": "帮我查一下周杰伦哪年出生的？"},
+              {"role": "assistant", "content": "周杰伦出生于 1979 年 1 月 18 日。"},
+              {"role": "user", "content": "他明天要在哪里开演唱会吗？"} # 用户最后一句提问
+          ]
+          变成
+          USER: 帮我查一下周杰伦哪年出生的？
+          ASSISTANT: 周杰伦出生于 1979 年 1 月 18 日。
+          USER: 他明天要在哪里开演唱会吗？
+         */
+        for (ChatMessageBO m : messages) {
+            String role = m.getRole();
+            if (!"user".equals(role) && !"assistant".equals(role)) {
+                continue;
+            }
+            conv.add(role.toUpperCase() + ": " + (m.getContent() == null ? "" : m.getContent()));
+        }
+        String conversation = String.join("\n", conv);
+
+        // 对应 Python：today / yesterday / tomorrow 的 ISO 日期
+        LocalDate todayDate = java.time.LocalDate.now();
+        String today = todayDate.toString();
+        String yesterday = todayDate.minusDays(1).toString();
+        String tomorrow = todayDate.plusDays(1).toString();
+
+        // 对应 Python：language=None -> 走"与原问题同语言"分支
+        String language = null;
+
+        // 对应 Python：template.render(today, yesterday, tomorrow, conversation, language)
+        String renderedPrompt = renderFullQuestionPrompt(today, yesterday, tomorrow, conversation, language);
+
+        // 对应 Python：ans = await chat_mdl.async_chat(rendered_prompt, [{"role":"user","content":"Output: "}])
+        List<Map<String, Object>> userMsg = new ArrayList<>();
+        Map<String, Object> output = new HashMap<>();
+        output.put("role", "user");
+        output.put("content", "Output: ");
+        userMsg.add(output);
+        String ans = asyncChatCall(chatModel, renderedPrompt, userMsg);
+
+        // 对应 Python：ans = re.sub(r"^.*</think>", "", ans, flags=re.DOTALL)
+        // 清除思考标签（针对推理模型）：r"^.*</think>"：匹配从字符串开头（^）一直到第一个 </think> 标签结束的所有内容。
+        // 许多现代推理模型（如 DeepSeek-R1、OpenAI o1/o3-mini 等）在输出最终答案前，会先输出一段包含在 <think>...</think> 内的思维链（CoT）。
+        // 作用：把模型返回的文本中，从开头到 </think> 的所有思考细节抹去，只保留 </think> 之后的纯净最终答案。
+        ans = ans == null ? "" : ans.replaceFirst("(?s)^.*</think>", "");
+
+        // 对应 Python：return ans if ans.find("**ERROR**") < 0 else messages[-1]["content"]
+        // 错误检测与兜底返回：在 ans 字符串中寻找是否包含 ERROR 这个关键词。
+        // 如果没有错误：返回处理干净后的 ans（正常输出）。
+        // 如果包含 ERROR：说明模型在生成过程中遇到了问题，或者触发了提示词中预设的错误拦截（例如：输入不合规、模型无法解析等）。此时代码会触发兜底机制（Fallback），直接返回 messages[-1]["content"]，也就是用户最后一次输入的原始文本，确保程序不会因为模型的垃圾输出而崩掉。
+        return !ans.contains("**ERROR**") ? ans : messages.getLast().getContent();
+    }
+
+    /**
+     * 渲染 RagFlow full_question_prompt 模板（提示词与代码解耦 + Spring AI 2.0 PromptTemplate 渲染）。
+     *
+     * <p>对应 Python：PROMPT_JINJA_ENV.from_string(FULL_QUESTION_PROMPT_TEMPLATE).render(...)。
+     * RagFlow 用 Jinja2，本项目用 Spring AI 2.0 的 {@link PromptTemplate}（占位符 {var}，仅变量替换、
+     * 不支持 if 逻辑）。Python 中的 {% if language %} 分支：由 Java 决定选用哪句短文案（仅一行文本，直接内联），
+     * 组装出的整句 languageHint 作为变量注入主模板。</p>
+     */
+    private String renderFullQuestionPrompt(String today, String yesterday, String tomorrow,
+                                            String conversation, String language) {
+        // 对应 Jinja {% if language %}...{% else %}...{% endif %}：选文案 + 填充 language，得到一句完整提示
+        String languageHint = StringUtils.isNotBlank(language)
+                ? "- Text generated MUST be in " + language + "."
+                : "- Text generated MUST be in the same language as the original user's question.";
+
+        // 用 Spring AI 2.0 PromptTemplate 渲染主模板的 {var} 占位符
+        Map<String, Object> variables = new HashMap<>();
+        variables.put("today", today);
+        variables.put("yesterday", yesterday);
+        variables.put("tomorrow", tomorrow);
+        variables.put("conversation", conversation);
+        variables.put("language_hint", languageHint);
+        return new PromptTemplate(loadPrompt("full_question_prompt")).render(variables);
+    }
+
+    /**
+     * 从 classpath 加载提示词模板并缓存（对应 RagFlow rag.prompts.template.load_prompt）。
+     * 这段代码的核心功能是：从项目的类路径（Classpath）中动态加载 Markdown 格式的提示词（Prompt）文件，并将其缓存到内存中，以避免重复读取文件带来的 I/O 开销。
+     *
+     * <p>模板位于 classpath:prompts/{name}.md，读取后 strip 首尾空白并缓存，行为与 Python 版一致。</p>
+     */
+    private String loadPrompt(String name) {
+        // computeIfAbsent ： 如果不存在（Absent），则计算（Compute）
+        return PROMPT_CACHE.computeIfAbsent(name, key -> {
+            String resource = "prompts/" + key + ".md";
+            // getClassLoader().getResourceAsStream(resource)：从 Java 的类路径（如编译后的 target/classes 或 src/main/resources 目录）中寻找并读取文件。
+            // 这在 Web 开发或打成 JAR 包运行的场景中非常标准。
+            // try-with-resources：使用 try (...) 的语法结构，确保无论读取是否成功，InputStream 流最终都会被自动关闭，防止内存泄漏。
+            try (InputStream in = AsyncChatServiceImpl.class.getClassLoader().getResourceAsStream(resource)) {
+                if (in == null) {
+                    throw new IllegalStateException("Prompt file '" + key + ".md' not found in classpath prompts/ directory.");
+                }
+                String content = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                return content.strip();
+            } catch (java.io.IOException e) {
+                throw new IllegalStateException("Failed to load prompt '" + key + "': " + e.getMessage(), e);
+            }
+        });
     }
 
     /**
@@ -880,7 +999,7 @@ public class AsyncChatServiceImpl implements AsyncChatService {
         Prompt prompt = buildPrompt(system, msg);
         ChatResponse response = chatMdl.call(prompt);
         String text = extractText(response);
-        return text == null ? "" : text;
+        return StringUtils.isBlank(text) ? "" : text;
     }
 
     /**
@@ -894,6 +1013,7 @@ public class AsyncChatServiceImpl implements AsyncChatService {
         for (Map<String, Object> m : msg) {
             String role = strOf(m.get("role"));
             String content = strOf(m.get("content"));
+            // todo 为啥这里没有tool类型
             if ("assistant".equals(role)) {
                 messages.add(new AssistantMessage(content));
             } else {
@@ -912,7 +1032,7 @@ public class AsyncChatServiceImpl implements AsyncChatService {
             return "";
         }
         String text = response.getResult().getOutput().getText();
-        return text == null ? "" : text;
+        return StringUtils.isBlank(text) ? "" : text;
     }
 
     /**
