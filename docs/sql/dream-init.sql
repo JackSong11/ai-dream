@@ -4,7 +4,7 @@
 DROP TABLE IF EXISTS `knowledge_base`;
 CREATE TABLE `knowledge_base`
 (
-    `id`            bigint       NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `id`            bigint       NOT NULL COMMENT '主键ID',
     `name`          varchar(128) NOT NULL COMMENT '知识库名称',
     `description`   text COMMENT '知识库描述',
     `doc_num`       int                   DEFAULT 0 COMMENT '包含的文档总数',
@@ -27,7 +27,7 @@ CREATE TABLE `knowledge_base`
 DROP TABLE IF EXISTS `kb_document`;
 CREATE TABLE `kb_document`
 (
-    `id`            bigint       NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `id`            bigint       NOT NULL COMMENT '主键ID',
     `kb_id`         bigint                DEFAULT NULL COMMENT '所属知识库/数据集 ID',
     `parser_id`     varchar(32)           DEFAULT NULL COMMENT '解析器 ID(naive/picture/audio/presentation/email 等)',
     `parser_config` text COMMENT '解析器配置(JSON 字符串)',
@@ -58,7 +58,7 @@ CREATE TABLE `kb_document`
 DROP TABLE IF EXISTS `kb_task`;
 CREATE TABLE `kb_task`
 (
-    `id`            bigint    NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `id`            bigint    NOT NULL COMMENT '主键ID',
     `doc_id`        bigint    NOT NULL COMMENT '所属文档 ID',
     `from_page`     int                DEFAULT '0' COMMENT '起始页码(从0开始)',
     `to_page`       int                DEFAULT '-1' COMMENT '结束页码(-1表示到末尾)',
@@ -81,7 +81,7 @@ CREATE TABLE `kb_task`
 
 CREATE TABLE `biz_user`
 (
-    `id`            bigint       NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `id`            bigint       NOT NULL COMMENT '主键ID',
     `user_id`       varchar(50)  NOT NULL,
     `password_hash` varchar(255) NOT NULL,
     `role`          enum ('ADMIN','USER','OPERATOR') DEFAULT 'USER',

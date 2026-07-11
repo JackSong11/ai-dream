@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.dream.dal.mapper.DialogMapper">
+
+    <resultMap id="BaseResultMap" type="com.example.dream.dal.po.ChatDialogPO">
+        <id property="id" column="id" jdbcType="VARCHAR"/>
+        <result property="userId" column="user_id" jdbcType="VARCHAR"/>
+        <result property="name" column="name" jdbcType="VARCHAR"/>
+        <result property="description" column="description" jdbcType="VARCHAR"/>
+        <result property="llmId" column="llm_id" jdbcType="VARCHAR"/>
+        <result property="llmSetting" column="llm_setting" jdbcType="VARCHAR"/>
+        <result property="promptConfig" column="prompt_config" jdbcType="VARCHAR"/>
+        <result property="kbIds" column="kb_ids" jdbcType="VARCHAR"/>
+        <result property="rerankId" column="rerank_id" jdbcType="VARCHAR"/>
+        <result property="topN" column="top_n" jdbcType="INTEGER"/>
+        <result property="topK" column="top_k" jdbcType="INTEGER"/>
+        <result property="similarityThreshold" column="similarity_threshold" jdbcType="DOUBLE"/>
+        <result property="vectorSimilarityWeight" column="vector_similarity_weight" jdbcType="DOUBLE"/>
+        <result property="status" column="status" jdbcType="VARCHAR"/>
+        <result property="creator" column="creator" jdbcType="VARCHAR"/>
+        <result property="editor" column="editor" jdbcType="VARCHAR"/>
+        <result property="createdTime" column="created_time" jdbcType="TIMESTAMP"/>
+        <result property="modifiedTime" column="modified_time" jdbcType="TIMESTAMP"/>
+        <result property="deleteFlag" column="delete_flag" jdbcType="TINYINT"/>
+    </resultMap>
+
+</mapper>
