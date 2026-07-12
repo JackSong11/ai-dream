@@ -39,6 +39,12 @@
                 </exclusion>
             </exclusions>
         </dependency>
+        <!-- xxHash 实现：对齐 RagFlow xxhash.xxh64，用于生成稳定 chunk id 与 LLM 缓存 key -->
+        <dependency>
+            <groupId>net.openhft</groupId>
+            <artifactId>zero-allocation-hashing</artifactId>
+            <version>0.16</version>
+        </dependency>
     </dependencies>
 
 </project>

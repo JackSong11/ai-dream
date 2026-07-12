@@ -27,7 +27,8 @@ public class KbDocumentPO extends BasePO {
     private String parserId;
 
     /**
-     * 解析器配置（JSON 字符串，对应 RagFlow parser_config）
+     * 解析器配置（JSON 字符串，对应 RagFlow parser_config）。每个文档都要有自己的解析配置
+     * 例如：{"chunk_token_num": 512, "delimiter": "\n!?。；！？", "layout_recognize": "DeepDOC", "analyze_hyperlink": True}
      */
     private String parserConfig;
 
@@ -75,6 +76,12 @@ public class KbDocumentPO extends BasePO {
      * token 数量（对应 RagFlow token_count）
      */
     private Integer tokenCount;
+
+    /**
+     * 文档级元数据（JSON 字符串，对应 RagFlow document.meta_fields）。
+     * 由 enable_metadata 增强抽取的各分块 metadata 合并去重后落库。
+     */
+    private String metaFields;
 
     /**
      * 错误信息

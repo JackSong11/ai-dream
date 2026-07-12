@@ -40,6 +40,7 @@ CREATE TABLE `kb_document`
     `status`        varchar(20)  NOT NULL COMMENT '文档状态',
     `chunk_count`   int                   DEFAULT '0' COMMENT '分块数量',
     `token_count`   int                   DEFAULT '0' COMMENT 'token 数量',
+    `meta_fields`   text COMMENT '文档级元数据(JSON 字符串,对齐 RagFlow document.meta_fields,由 enable_metadata 抽取合并后落库)',
     `error_msg`     text COMMENT '错误信息',
     `delete_flag`   tinyint      NOT NULL DEFAULT 0 COMMENT '逻辑删除字段 0:代表有效， 1:代表逻辑删除',
     `creator`       varchar(20)           DEFAULT NULL COMMENT '创建人',

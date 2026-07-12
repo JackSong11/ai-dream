@@ -1,9 +1,13 @@
 package com.example.dream.service.core.chat.impl;
 
+import com.example.dream.dal.po.KnowledgeBasePO;
 import com.example.dream.service.biz.bo.chat.ChatAnswerBO;
 import com.example.dream.service.biz.bo.chat.ChatMessageBO;
 import com.example.dream.service.biz.bo.chat.DialogBO;
+import com.example.dream.service.core.KnowledgeBaseCoreService;
 import com.example.dream.service.core.chat.AsyncChatService;
+import com.example.dream.service.core.chat.retriever.Retriever;
+import com.example.dream.common.constant.DocTaskConstants;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -21,12 +25,7 @@ import org.springframework.util.CollectionUtils;
 
 import java.io.InputStream;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
@@ -63,6 +62,16 @@ public class AsyncChatServiceImpl implements AsyncChatService {
      * 读取 application.yml 中 spring.ai.openai.embedding 配置）。
      */
     private final EmbeddingModel embeddingModel;
+
+    private final KnowledgeBaseCoreService knowledgeBaseCoreService;
+
+    /**
+     * 检索器（对应 RagFlow settings.retriever / Dealer），是引擎无关的检索编排层契约。
+     * Spring 注入其唯一实现
+     * {@link com.example.dream.service.core.chat.retriever.Dealer Dealer}，
+     * 底层存储 I/O 经 DocStoreConnection 抽象隔离（当前为 ElasticsearchDocStore）。
+     */
+    private final Retriever retriever;
 
     /**
      * 引用坏格式修复正则（对应 Python BAD_CITATION_PATTERNS）。
@@ -118,21 +127,18 @@ public class AsyncChatServiceImpl implements AsyncChatService {
         // if not dialog.kb_ids and not use_web_search: -> async_chat_solo
         if (CollectionUtils.isEmpty(dialog.getKbIds())) {
             throw new IllegalArgumentException("rag 对话必须要有知识库id，没有知识库id的单纯对话我后续是要做的，现在是学rag.");
-            return;
         }
 
         long chatStartTs = System.nanoTime();
 
-        // 模型配置解析（对应 dia.llm_id -> get_model_config_from_provider_instance / 默认模型）
+        List<Long> kbIds = dialog.getKbIds();
+        List<KnowledgeBasePO> kbList = knowledgeBaseCoreService.listByIds(kbIds);
+        Object rerankModel = null;
+        // max_tokens = llm_model_config.get("max_tokens") or 8192
+        int maxTokens =  8192;
 
         long checkLlmTs = System.nanoTime();
 
-        // get_models：kbs / embd_mdl / rerank_mdl / chat_mdl / tts_mdl
-        ModelBundle models = getModels(dialog, traceContext, convId);
-
-        // todo 这里需要换成ES
-        // 🔋 模块一：上下文解析与附件提取
-        Object retriever = getRetriever();
         // questions = [m["content"] for m in messages if role == "user"][-3:]
         // 多轮问题截取： 获取用户最后 3 轮的对话内容，用于后续的多轮理解。
         List<String> questions = new ArrayList<>();
@@ -144,7 +150,7 @@ public class AsyncChatServiceImpl implements AsyncChatService {
         questions = lastN(questions, 3);
 
         // attachments（doc_ids）
-        List<String> attachments = null;
+        List<Long> attachments = null;
 
         String attachmentsText = "";
         List<String> imageAttachments = new ArrayList<>();
@@ -152,6 +158,13 @@ public class AsyncChatServiceImpl implements AsyncChatService {
 
         Map<String, Object> promptConfig = dialog.getPromptConfig() == null
                 ? new HashMap<>() : new HashMap<>(dialog.getPromptConfig());
+
+        // 对应 Python: include_metadata, metadata_fields = _resolve_reference_metadata_preferences(kwargs, prompt_config)
+        // request 取 kwargs（本次请求入参），config 取 prompt_config（对话配置），request 值优先于 config。
+        ReferenceMetadataPreference referenceMetadataPreference =
+                resolveReferenceMetadataPreferences(kwargs, promptConfig);
+        boolean includeReferenceMetadata = referenceMetadataPreference.include;
+        Set<String> metadataFields = referenceMetadataPreference.fields;
 
         // 🔀 模块二：精准 SQL 检索（Fast Path）
         // 在进入复杂的向量检索前，系统会判断是否能通过结构化 SQL 直接获取精准答案。
@@ -176,7 +189,6 @@ public class AsyncChatServiceImpl implements AsyncChatService {
             addKnowledgeParam(promptConfig);
             paramKeys.add("knowledge");
         }
-        log.debug("attachments={}, param_keys={}, embd_mdl={}", attachments, paramKeys, models.embdMdl);
 
         // 4. 循环检查参数的完整性：遍历所有定义的参数。
         for (Map<String, Object> p : parametersOf(promptConfig)) {
@@ -214,7 +226,7 @@ public class AsyncChatServiceImpl implements AsyncChatService {
             questions = lastN(questions, 1);
         }
 
-        // 跨语言翻译处理
+        // 跨语言翻译处理 todo：还空着在，需要补充
         // 作用：将上面处理完的目标问题（questions[0]），翻译成配置中指定的语言（prompt_config["cross_languages"]）。
         // 例如，将中文问题翻译成英文再提交给只懂英文的底层知识库或模型。
         if (promptConfig.get("cross_languages") != null) {
@@ -226,55 +238,66 @@ public class AsyncChatServiceImpl implements AsyncChatService {
         // meta_data_filter（暂未实现，桩占位）
         if (dialog.getMetaDataFilter() != null && !dialog.getMetaDataFilter().isEmpty()) {
             attachments = applyMetaDataFilter(dialog.getMetaDataFilter(),
-                    questions.get(questions.size() - 1), models.chatMdl, attachments, dialog.getKbIds());
+                    questions.getLast(), chatModel, attachments, dialog.getKbIds());
         }
 
+        // 关键次扩展：通过 keyword_extraction 提取核心词追加到问题末尾，增强召回。
         if (getBool(promptConfig.get("keyword"), false)) {
-            String last = questions.get(questions.size() - 1);
+            String last = questions.getLast();
+            // List<String>的set语法：更新 questions 列表（List）中的最后一项，在其原有内容后面追加通过模型提取出来的关键词。
             questions.set(questions.size() - 1,
-                    last + "," + keywordExtraction(models.chatMdl, last));
+                    last + "," + keywordExtraction(chatModel, last));
         }
         long refineQuestionTs = System.nanoTime();
 
         // ====== 检索阶段 ======
+        // 🔍 模块四：多路混合检索（Hybrid Retrieval）与 Agent 模式
+        // 这是代码的核心检索部分，分支为 Agent 深度搜索 和 常规多路召回：
         String thought = "";
         Map<String, Object> kbinfos = newKbinfos();
         List<String> knowledges;
 
         if (paramKeys.contains("knowledge")) {
             log.debug("Proceeding with retrieval");
-            List<String> tenantIds = tenantIdsOf(models.kbs);
+            List<String> userIds = userIdsOf(kbList);
+            // 分支 A：Deep Research 模式（Agent 模式）
             if (getBool(promptConfig.get("reasoning"), false) || getBool(kwargs.get("reasoning"), false)) {
                 // DeepResearcher 深度检索（桩占位，仍逐条 yield 检索过程标记）
-                deepResearch(models.chatMdl, promptConfig, models.embdMdl, tenantIds, dialog,
-                        attachments, useWebSearch, kbinfos, questions, chunkConsumer);
-            } else {
-                if (models.embdMdl != null) {
-                    kbinfos = retrieval(retriever, String.join(" ", questions), models.embdMdl,
-                            tenantIds, dialog.getKbIds(), 1, dialog.getTopN(),
-                            dialog.getSimilarityThreshold(), dialog.getVectorSimilarityWeight(),
-                            attachments, dialog.getTopK(), true, models.rerankMdl,
-                            labelQuestion(String.join(" ", questions), models.kbs));
+                deepResearch(chatModel, promptConfig, embeddingModel, userIds, dialog,
+                        attachments, kbinfos, questions, chunkConsumer);
+            }
+            // 分支 B：常规多路召回（向量 + 树状上下级 + 网络 + 知识图谱）
+            else {
+
+                if (embeddingModel != null) {
+                    kbinfos = retriever.retrieval(
+                            String.join(" ", questions),
+                            embeddingModel,
+                            userIds,
+                            dialog.getKbIds(),
+                            1,
+                            dialog.getTopN(),
+                            dialog.getSimilarityThreshold(),
+                            dialog.getVectorSimilarityWeight(),
+                            attachments,
+                            dialog.getTopK(),
+                            true,
+                            rerankModel,
+                            labelQuestion(String.join(" ", questions), kbList));
                     if (getBool(promptConfig.get("toc_enhance"), false)) {
                         List<Map<String, Object>> cks = retrievalByToc(retriever,
-                                String.join(" ", questions), chunksOf(kbinfos), tenantIds,
-                                models.chatMdl, dialog.getTopN());
+                                String.join(" ", questions), chunksOf(kbinfos), userIds,
+                                chatModel, dialog.getTopN());
                         if (cks != null && !cks.isEmpty()) {
                             kbinfos.put("chunks", cks);
                         }
                     }
-                    kbinfos.put("chunks", retrievalByChildren(retriever, chunksOf(kbinfos), tenantIds));
-                }
-                if (useWebSearch) {
-                    Map<String, Object> tavRes = tavilyRetrieve(strOf(promptConfig.get("tavily_api_key")),
-                            String.join(" ", questions));
-                    chunksOf(kbinfos).addAll(chunksOf(tavRes));
-                    docAggsOf(kbinfos).addAll(docAggsOf(tavRes));
+                    kbinfos.put("chunks", retrievalByChildren(retriever, chunksOf(kbinfos), userIds));
                 }
                 if (getBool(promptConfig.get("use_kg"), false)) {
-                    Map<String, Object> ck = kgRetrieval(String.join(" ", questions), tenantIds,
-                            dialog.getKbIds(), models.embdMdl, dialog.getUserId(), traceContext, convId);
-                    if (ck != null && isNotBlank(strOf(ck.get("content_with_weight")))) {
+                    Map<String, Object> ck = kgRetrieval(String.join(" ", questions), userIds,
+                            dialog.getKbIds(), embeddingModel, dialog.getUserId(), convId);
+                    if (ck != null && StringUtils.isNotBlank(strOf(ck.get("content_with_weight")))) {
                         chunksOf(kbinfos).add(0, ck);
                     }
                 }
@@ -296,7 +319,6 @@ public class AsyncChatServiceImpl implements AsyncChatService {
             ChatAnswerBO ans = new ChatAnswerBO();
             ans.setAnswer(emptyRes);
             ans.setReference(kbinfos);
-            ans.setAudioBinary(tts(models.ttsMdl, emptyRes));
             ans.setFinalFlag(Boolean.TRUE);
             putExtra(ans, "prompt", "\n\n### Query:\n" + String.join(" ", questions));
             chunkConsumer.accept(ans);
@@ -305,7 +327,7 @@ public class AsyncChatServiceImpl implements AsyncChatService {
 
         // knowledge 拼接
         String knowledgeText = String.join("\n\n------\n\n", knowledges);
-        if (isNotBlank(knowledgeText)) {
+        if (StringUtils.isNotBlank(knowledgeText)) {
             kwargs.put("knowledge", "\n------\n" + knowledgeText);
         } else {
             kwargs.putIfAbsent("knowledge", "");
@@ -341,10 +363,10 @@ public class AsyncChatServiceImpl implements AsyncChatService {
         FitInResult fitIn = messageFitIn(msg, (int) (maxTokens * 0.95));
         int usedTokenCount = fitIn.usedTokenCount;
         msg = fitIn.msg;
-        String modelType = llmModelConfig == null ? "chat" : String.valueOf(llmModelConfig.get("model_type"));
-        if ("chat".equals(modelType) && !imageAttachments.isEmpty()) {
-            convertLastUserMsgToMultimodal(msg, imageAttachments, factory);
-        }
+
+        // 删掉了 convert_last_user_msg_to_multimodal
+        // 将多轮对话历史（msg）中“最后一条由用户发送的消息”转换为多模态结构，即把一组图片的 Data URI（或 Base64 字符串）合并到该消息的 content 中。
+
         if (msg.size() < 2) {
             throw new IllegalStateException("message_fit_in has bug: " + msg);
         }
@@ -357,53 +379,36 @@ public class AsyncChatServiceImpl implements AsyncChatService {
 
         // decorate_answer 所需的上下文，通过 final 引用捕获
         DecorateContext dc = new DecorateContext();
-        dc.embdMdl = models.embdMdl;
+        dc.embdMdl = embeddingModel;
         dc.promptConfig = promptConfig;
         dc.knowledges = knowledges;
         dc.kwargs = kwargs;
         dc.kbinfos = kbinfos;
         dc.retriever = retriever;
-        dc.tenantIds = tenantIdsOf(models.kbs);
+        dc.userIds = userIdsOf(kbList);
         dc.dialog = dialog;
         dc.questions = questions;
         dc.prompt = prompt;
         dc.chatStartTs = chatStartTs;
         dc.checkLlmTs = checkLlmTs;
-        dc.checkLangfuseTracerTs = checkLangfuseTracerTs;
-        dc.bindModelsTs = bindModelsTs;
         dc.refineQuestionTs = refineQuestionTs;
         dc.retrievalTs = retrievalTs;
         dc.usedTokenCount = usedTokenCount;
-        dc.langfuseGeneration = langfuseGeneration;
 
-        // langfuse start_observation（桩占位）
-        if (langfuseTracer != null) {
-            startLangfuseObservation(traceContext, llmModelConfig, prompt, prompt4citation, msg, convId);
-        }
 
         List<Map<String, Object>> msgWithoutSystem = msg.subList(1, msg.size());
         if (stream) {
-            ThinkStreamState lastState;
-            if ("chat".equals(modelType)) {
-                lastState = streamlyDelta(models.chatMdl, prompt + prompt4citation, msgWithoutSystem, genConf, null, chunkConsumer, models.ttsMdl);
-            } else {
-                lastState = streamlyDelta(models.chatMdl, prompt + prompt4citation, msgWithoutSystem, genConf, imageFiles, chunkConsumer, models.ttsMdl);
-            }
+            ThinkStreamState lastState = streamlyDelta(chatModel, prompt + prompt4citation, msgWithoutSystem, genConf, null, chunkConsumer, rerankModel);
             String fullAnswer = lastState == null ? "" : lastState.fullText;
-            if (isNotBlank(fullAnswer)) {
+            if (StringUtils.isNotBlank(fullAnswer)) {
                 ChatAnswerBO fin = decorateAnswer(extractVisibleAnswer(thought + fullAnswer), dc);
                 fin.setFinalFlag(Boolean.TRUE);
                 fin.setAnswer("");
                 chunkConsumer.accept(fin);
             }
         } else {
-            String answer;
-            if ("chat".equals(modelType)) {
-                answer = asyncChatCall(models.chatMdl, prompt + prompt4citation, msgWithoutSystem, genConf, null);
-            } else {
-                answer = asyncChatCall(models.chatMdl, prompt + prompt4citation, msgWithoutSystem, genConf, imageFiles);
-            }
-            Object userContent = msg.get(msg.size() - 1).getOrDefault("content", "[content not available]");
+            String answer = asyncChatCall(chatModel, prompt + prompt4citation, msgWithoutSystem);
+            Object userContent = msg.getLast().getOrDefault("content", "[content not available]");
             log.debug("User: {}|Assistant: {}", userContent, answer);
             ChatAnswerBO res = decorateAnswer(answer, dc);
             chunkConsumer.accept(res);
@@ -433,7 +438,7 @@ public class AsyncChatServiceImpl implements AsyncChatService {
             String normalizedAnswer = normalizeArabicDigits(answer);
             if (dc.embdMdl != null && !CITATION_MARKER_PATTERN.matcher(normalizedAnswer).find()) {
                 // 拉取待引用 chunk 的向量后做 insert_citations（桩占位）
-                hydrateChunkVectors(dc.retriever, chunksOf(kbinfos), dc.tenantIds, dc.dialog.getKbIds());
+                hydrateChunkVectors(dc.retriever, chunksOf(kbinfos), dc.userIds, dc.dialog.getKbIds());
                 InsertCitationsResult ir = insertCitations(dc.retriever, answer,
                         contentLtksOf(kbinfos), vectorsOf(kbinfos), dc.embdMdl,
                         1 - dc.dialog.getVectorSimilarityWeight(), dc.dialog.getVectorSimilarityWeight());
@@ -525,7 +530,7 @@ public class AsyncChatServiceImpl implements AsyncChatService {
      */
     private boolean shouldUseWebSearch(Map<String, Object> promptConfig, Object internet) {
         if (promptConfig == null || promptConfig.get("tavily_api_key") == null
-                || !isNotBlank(strOf(promptConfig.get("tavily_api_key")))) {
+                || !StringUtils.isNotBlank(strOf(promptConfig.get("tavily_api_key")))) {
             return false;
         }
         Boolean normalized = normalizeInternetFlag(internet);
@@ -631,19 +636,6 @@ public class AsyncChatServiceImpl implements AsyncChatService {
 
     // ==================== 以下为 TODO 桩方法：待接入真实底层能力 ====================
 
-    /**
-     * TODO 对应 get_models：装配 kbs / embd_mdl / rerank_mdl / chat_mdl / tts_mdl。
-     */
-    private ModelBundle getModels(DialogBO dialog, Map<String, Object> traceContext, Long sessionId) {
-        // TODO 接入知识库/embedding/rerank/chat/tts 模型后返回真实实例
-        ModelBundle bundle = new ModelBundle();
-        bundle.kbs = new ArrayList<>();
-        bundle.embdMdl = null;
-        bundle.rerankMdl = null;
-        bundle.chatMdl = newLlmBundle(dialog.getUserId(), null, sessionId);
-        bundle.ttsMdl = null;
-        return bundle;
-    }
 
     /**
      * TODO 对应 LLMBundle 构造：创建聊天/嵌入/TTS 模型包装。
@@ -654,19 +646,77 @@ public class AsyncChatServiceImpl implements AsyncChatService {
     }
 
     /**
-     * TODO 对应 settings.retriever：获取向量检索器实例。
+     * 解析 reference metadata 的 include/fields 偏好（1:1 还原 Python
+     * resolve_reference_metadata_preferences）。
+     *
+     * <p>request 值优先于 config 值；兼容 legacy 请求键 include_metadata / metadata_fields。</p>
+     *
+     * <ul>
+     *   <li>config/request 均以 {@code reference_metadata} 子 Map 承载 include/fields，request 覆盖 config；</li>
+     *   <li>顶层 legacy 键 {@code include_metadata}（转 boolean）、{@code metadata_fields} 进一步覆盖；</li>
+     *   <li>fields 为 null -> 返回 (include, null)；</li>
+     *   <li>fields 非 List -> 打警告并返回 (include, 空集合)，后续 enrich 将跳过；</li>
+     *   <li>fields 为 List -> 仅保留其中的 String 元素组成集合返回。</li>
+     * </ul>
+     *
+     * @param requestPayload 对应 Python request_payload（本次请求入参 kwargs）
+     * @param configPayload  对应 Python config_payload（对话配置 prompt_config）
+     * @return include 标志与 fields 集合的组合结果
      */
-    private Object getRetriever() {
-        // TODO 接入 ES/向量检索器
-        return null;
-    }
+    @SuppressWarnings("unchecked")
+    private ReferenceMetadataPreference resolveReferenceMetadataPreferences(Map<String, Object> requestPayload,
+                                                                            Map<String, Object> configPayload) {
+        // 对应 Python: request_payload = request_payload or {}; config_payload = config_payload or {}
+        Map<String, Object> request = requestPayload == null ? new HashMap<>() : requestPayload;
+        Map<String, Object> config = configPayload == null ? new HashMap<>() : configPayload;
 
-    /**
-     * TODO 对应 _resolve_reference_metadata 的 metadata_fields。
-     */
-    private List<String> resolveMetadataFields(Map<String, Object> promptConfig, Map<String, Object> kwargs) {
-        // TODO 接入 reference metadata 偏好解析
-        return new ArrayList<>();
+        // 对应 Python: config_ref = config_payload.get("reference_metadata", {})
+        //             request_ref = request_payload.get("reference_metadata", {})
+        Object configRef = config.get("reference_metadata");
+        Object requestRef = request.get("reference_metadata");
+
+        // 对应 Python: resolved = {}; if isinstance(config_ref, dict): resolved.update(config_ref)
+        //             if isinstance(request_ref, dict): resolved.update(request_ref)
+        Map<String, Object> resolved = new HashMap<>();
+        if (configRef instanceof Map) {
+            resolved.putAll((Map<String, Object>) configRef);
+        }
+        if (requestRef instanceof Map) {
+            resolved.putAll((Map<String, Object>) requestRef);
+        }
+
+        // 对应 Python: if "include_metadata" in request_payload: resolved["include"] = bool(...)
+        if (request.containsKey("include_metadata")) {
+            resolved.put("include", getBool(request.get("include_metadata"), false));
+        }
+        // 对应 Python: if "metadata_fields" in request_payload: resolved["fields"] = ...
+        if (request.containsKey("metadata_fields")) {
+            resolved.put("fields", request.get("metadata_fields"));
+        }
+
+        // 对应 Python: include_metadata = bool(resolved.get("include", False))
+        boolean includeMetadata = getBool(resolved.get("include"), false);
+        Object fields = resolved.get("fields");
+
+        // 对应 Python: if fields is None: return include_metadata, None
+        if (fields == null) {
+            return new ReferenceMetadataPreference(includeMetadata, null);
+        }
+        // 对应 Python: if not isinstance(fields, list): logger.warning(...); return include_metadata, set()
+        if (!(fields instanceof List)) {
+            log.warn("reference_metadata.fields is not a list; include_metadata={} fields={} type={} resolved={}."
+                            + " enrich_chunks_with_document_metadata will skip enrichment.",
+                    includeMetadata, fields, fields.getClass().getSimpleName(), resolved);
+            return new ReferenceMetadataPreference(includeMetadata, new LinkedHashSet<>());
+        }
+        // 对应 Python: return include_metadata, {f for f in fields if isinstance(f, str)}
+        Set<String> fieldSet = new LinkedHashSet<>();
+        for (Object f : (List<Object>) fields) {
+            if (f instanceof String s) {
+                fieldSet.add(s);
+            }
+        }
+        return new ReferenceMetadataPreference(includeMetadata, fieldSet);
     }
 
     /**
@@ -681,7 +731,7 @@ public class AsyncChatServiceImpl implements AsyncChatService {
     /**
      * TODO 对应 _enrich_chunks_with_document_metadata：为 chunk 补充文档元数据。
      */
-    private void enrichChunksWithDocumentMetadata(List<Map<String, Object>> chunks, List<String> metadataFields) {
+    private void enrichChunksWithDocumentMetadata(List<Map<String, Object>> chunks, Set<String> metadataFields) {
         // TODO 接入文档元数据服务
     }
 
@@ -814,26 +864,95 @@ public class AsyncChatServiceImpl implements AsyncChatService {
     /**
      * TODO 对应 apply_meta_data_filter：按元数据过滤 doc 范围。
      */
-    private List<String> applyMetaDataFilter(Map<String, Object> metaDataFilter, String question,
-                                             Object chatMdl, List<String> attachments, List<Long> kbIds) {
+    private List<Long> applyMetaDataFilter(Map<String, Object> metaDataFilter, String question,
+                                           Object chatMdl, List<Long> attachments, List<Long> kbIds) {
         // TODO 接入元数据过滤
         return attachments;
     }
 
     /**
-     * TODO 对应 keyword_extraction：从问题中抽取关键词。
+     * 关键词抽取（百分百还原 RagFlow rag.prompts.generator.keyword_extraction）。
+     *
+     * <p>对应 Python：async def keyword_extraction(chat_mdl, content, topn=3)。调用点
+     * {@code keywordExtraction(chatModel, last)} 未传 topn，等价 Python 默认 topn=3。RagFlow 中
+     * chat_mdl 为 LLMBundle，本项目统一使用 Spring AI 自动装配的 {@link #chatModel}，因此签名保留
+     * chatMdl 仅用于对齐（实际忽略，与 {@link #fullQuestion} 处理一致）。</p>
+     *
+     * <p>流程：渲染 KEYWORD_PROMPT_TEMPLATE(content, topn) -> 构造 [system, user "Output: "] 消息 ->
+     * message_fit_in 裁剪 -> LLM 生成(temperature=0.2) -> 去除 &lt;/think&gt; 及其之前内容 ->
+     * 命中 **ERROR** 返回空串 -> 返回关键词字符串。</p>
+     *
+     * @param chatMdl  对齐 Python chat_mdl（实际使用 {@link #chatModel}）
+     * @param question 对应 Python content：待抽取关键词的文本
+     * @return 以英文逗号分隔的关键词字符串；命中错误时返回空串
      */
     private String keywordExtraction(Object chatMdl, String question) {
-        // TODO 接入关键词抽取
-        return "";
+        // 对应 Python：topn=3（调用点未传，使用默认值）
+        int topn = 3;
+
+        // 对应 Python：template = PROMPT_JINJA_ENV.from_string(KEYWORD_PROMPT_TEMPLATE)
+        //             rendered_prompt = template.render(content=content, topn=topn)
+        String renderedPrompt = renderKeywordPrompt(question, topn);
+
+        // 对应 Python：msg = [{"role":"system","content":rendered_prompt}, {"role":"user","content":"Output: "}]
+        List<Map<String, Object>> msg = new ArrayList<>();
+        Map<String, Object> systemMsg = new HashMap<>();
+        systemMsg.put("role", "system");
+        systemMsg.put("content", renderedPrompt);
+        msg.add(systemMsg);
+        Map<String, Object> userMsg = new HashMap<>();
+        userMsg.put("role", "user");
+        userMsg.put("content", "Output: ");
+        msg.add(userMsg);
+
+        // 对应 Python：_, msg = message_fit_in(msg, chat_mdl.max_length)
+        // RagFlow 用 chat_mdl.max_length 作为上限，本项目沿用桩实现 messageFitIn（当前不做实际裁剪）。
+        FitInResult fitIn = messageFitIn(msg, numTokensFromString(renderedPrompt) + 1);
+        msg = fitIn.msg;
+
+        // 对应 Python：kwd = await chat_mdl.async_chat(rendered_prompt, msg[1:], {"temperature": 0.2})
+        // 传入 system=rendered_prompt 与除 system 外的消息（msg[1:]），temperature=0.2 在 RagFlow 中作为
+        // 生成配置；当前 asyncChatCall 三参版本沿用 Spring AI 默认配置（与 fullQuestion 处理保持一致）。
+        List<Map<String, Object>> msgWithoutSystem = new ArrayList<>(msg.subList(1, msg.size()));
+        String kwd = asyncChatCall(chatModel, renderedPrompt, msgWithoutSystem);
+
+        // 对应 Python：if isinstance(kwd, tuple): kwd = kwd[0]
+        // Java 下 asyncChatCall 恒返回 String，等价已取标量结果，无需额外处理。
+        kwd = StringUtils.isBlank(kwd) ? "" : kwd;
+
+        // 对应 Python：kwd = re.sub(r"^.*</think>", "", kwd, flags=re.DOTALL)
+        // 去除推理模型思维链：从开头到最后（DOTALL 贪婪）一个 </think> 的所有内容。
+        kwd = kwd.replaceFirst("(?s)^.*</think>", "");
+
+        // 对应 Python：if kwd.find("**ERROR**") >= 0: return ""
+        if (kwd.contains("**ERROR**")) {
+            return "";
+        }
+
+        // 对应 Python：return kwd
+        return kwd;
+    }
+
+    /**
+     * 渲染 RagFlow keyword_prompt 模板（提示词与代码解耦 + Spring AI 2.0 PromptTemplate 渲染）。
+     *
+     * <p>对应 Python：PROMPT_JINJA_ENV.from_string(KEYWORD_PROMPT_TEMPLATE).render(content=content, topn=topn)。
+     * RagFlow 用 Jinja2（{{ content }} / {{ topn }}），本项目 classpath 下的 keyword_prompt.md 使用
+     * Spring AI {@link PromptTemplate} 占位符（{content} / {topn}），仅做变量替换，语义完全一致。</p>
+     */
+    private String renderKeywordPrompt(String content, int topn) {
+        Map<String, Object> variables = new HashMap<>();
+        variables.put("content", StringUtils.isBlank(content) ? "" : content);
+        variables.put("topn", topn);
+        return new PromptTemplate(loadPrompt("keyword_prompt")).render(variables);
     }
 
     /**
      * TODO 对应 DeepResearcher.research：深度检索并逐条 yield 检索过程标记。
      */
     private void deepResearch(Object chatMdl, Map<String, Object> promptConfig, Object embdMdl,
-                              List<String> tenantIds, DialogBO dialog, List<String> attachments,
-                              boolean useWebSearch, Map<String, Object> kbinfos, List<String> questions,
+                              List<String> tenantIds, DialogBO dialog, List<Long> attachments,
+                              Map<String, Object> kbinfos, List<String> questions,
                               Consumer<ChatAnswerBO> consumer) {
         // 对应 Python: yield <retrieving> ... </retrieving> 包裹深度检索过程
         ChatAnswerBO start = new ChatAnswerBO();
@@ -849,17 +968,6 @@ public class AsyncChatServiceImpl implements AsyncChatService {
         consumer.accept(end);
     }
 
-    /**
-     * TODO 对应 retriever.retrieval：向量+全文混合检索。
-     */
-    private Map<String, Object> retrieval(Object retriever, String question, Object embdMdl,
-                                          List<String> tenantIds, List<Long> kbIds, int page, int pageSize,
-                                          double similarityThreshold, double vectorSimilarityWeight,
-                                          List<String> docIds, int top, boolean aggs, Object rerankMdl,
-                                          Object rankFeature) {
-        // TODO 接入 ES/向量检索
-        return newKbinfos();
-    }
 
     /**
      * TODO 对应 retriever.retrieval_by_toc：基于目录结构增强检索。
@@ -892,7 +1000,7 @@ public class AsyncChatServiceImpl implements AsyncChatService {
      * TODO 对应 settings.kg_retriever.retrieval：知识图谱检索。
      */
     private Map<String, Object> kgRetrieval(String question, List<String> tenantIds, List<Long> kbIds,
-                                            Object embdMdl, String tenantId, Map<String, Object> traceContext,
+                                            Object embdMdl, String tenantId,
                                             Long sessionId) {
         // TODO 接入知识图谱检索
         return null;
@@ -900,8 +1008,9 @@ public class AsyncChatServiceImpl implements AsyncChatService {
 
     /**
      * TODO 对应 label_question：为问题打标签用于 rank 特征。
+     * 根据用户输入的问答问题（question）以及一组知识库对象（kbs），自动识别并打上相关的标签（Tags），以便后续进行更精准的知识检索。
      */
-    private Object labelQuestion(String question, List<Object> kbs) {
+    private Object labelQuestion(String question, List<KnowledgeBasePO> kbs) {
         // TODO 接入 rank 特征标注
         return null;
     }
@@ -932,15 +1041,6 @@ public class AsyncChatServiceImpl implements AsyncChatService {
             used += numTokensFromString(strOf(m.get("content")));
         }
         return new FitInResult(used, msg);
-    }
-
-    /**
-     * TODO 对应 langfuse start_observation：开启一次生成观测。
-     */
-    private void startLangfuseObservation(Map<String, Object> traceContext, Map<String, Object> llmModelConfig,
-                                          String prompt, String prompt4citation, List<Map<String, Object>> msg,
-                                          Long sessionId) {
-        // TODO 接入 langfuse
     }
 
     /**
@@ -1229,10 +1329,16 @@ public class AsyncChatServiceImpl implements AsyncChatService {
         params.add(knowledge);
     }
 
-    private List<String> tenantIdsOf(List<Object> kbs) {
+    private List<String> userIdsOf(List<KnowledgeBasePO> kbs) {
         // 对应 list(set([kb.tenant_id for kb in kbs]))
         Set<String> set = new LinkedHashSet<>();
-        // TODO kbs 元素类型接入后提取 tenant_id
+        if (!CollectionUtils.isEmpty(kbs)) {
+            for (KnowledgeBasePO kb : kbs) {
+                if (kb != null && StringUtils.isNotBlank(kb.getUserId())) {
+                    set.add(kb.getUserId());
+                }
+            }
+        }
         return new ArrayList<>(set);
     }
 
@@ -1266,7 +1372,7 @@ public class AsyncChatServiceImpl implements AsyncChatService {
         Map<String, Object> kwargs;
         Map<String, Object> kbinfos;
         Object retriever;
-        List<String> tenantIds;
+        List<String> userIds;
         DialogBO dialog;
         List<String> questions;
         String prompt;
@@ -1340,4 +1446,21 @@ public class AsyncChatServiceImpl implements AsyncChatService {
     private static class ThinkStreamState {
         String fullText = "";
     }
+
+    /**
+     * resolve_reference_metadata_preferences 结果（对应 Python 返回的 tuple[bool, set[str] | None]）。
+     *
+     * <p>{@code include} 对应元组第一项 include_metadata；{@code fields} 对应第二项：
+     * null 表示未指定字段（Python None），空集合表示 fields 非法被降级，非空集合为过滤后的字符串字段。</p>
+     */
+    private static class ReferenceMetadataPreference {
+        final boolean include;
+        final Set<String> fields;
+
+        ReferenceMetadataPreference(boolean include, Set<String> fields) {
+            this.include = include;
+            this.fields = fields;
+        }
+    }
+
 }

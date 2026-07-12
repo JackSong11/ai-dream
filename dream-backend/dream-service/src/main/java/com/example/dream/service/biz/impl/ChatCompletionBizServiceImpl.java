@@ -495,9 +495,6 @@ public class ChatCompletionBizServiceImpl implements ChatCompletionBizService {
         if (ans.getDialogId() != null) {
             map.put("dialog_id", ans.getDialogId());
         }
-        if (ans.getAudioBinary() != null) {
-            map.put("audio_binary", ans.getAudioBinary());
-        }
         if (ans.getFinalFlag() != null) {
             map.put("final", ans.getFinalFlag());
         }

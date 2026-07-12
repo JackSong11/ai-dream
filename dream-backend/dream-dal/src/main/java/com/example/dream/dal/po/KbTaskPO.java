@@ -58,4 +58,9 @@ public class KbTaskPO extends BasePO {
      * 重试次数（对应 RagFlow Task.retry_count）
      */
     private Integer retryCount;
+
+    /**
+     * 任务指纹
+     */
+    private String digest;
 }

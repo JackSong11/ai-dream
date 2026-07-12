@@ -37,6 +37,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -458,13 +460,14 @@ public class DocumentBizServiceImpl implements DocumentBizService {
     }
 
     /**
-     * 触发文档解析，对应 RagFlow DocumentService.run(tenant_id, doc_dict, kb_table_num_map)。
-     * <p>生产端职责：创建一条解析任务记录，再将任务消息投递到 Redis Stream 队列；
-     * 真正的分块 / 向量化 / 写 ES 由 dream-processor 的异步消费者执行。
-     * 严格对齐 RagFlow：run 接口只负责拆分任务 + 发消息，不做任何解析。</p>
+     * 触发文档解析，对应 RagFlow queue_tasks 全流程。
+     * <p>生产端职责：拆分任务 -> 计算指纹 -> 复用旧任务分块 -> 清理旧任务/旧 ES chunks
+     * -> 回填 chunk_num -> 批量入库 -> 仅投递未完成任务到 Redis Stream。
+     * 真正的分块 / 向量化 / 写 ES 由 dream-processor 异步消费执行。</p>
      */
     private void runDocument(String userId, KbDocumentPO doc) {
-        // 1) 创建解析任务记录（对应 RagFlow queue_tasks -> Task 表插入）
+        // 1) 拆分任务（当前架构统一单任务，对应 queue_tasks 的 else 分支）
+        List<KbTaskPO> parseTaskArray = new ArrayList<>();
         KbTaskPO task = new KbTaskPO();
         task.setId(IdWorker.getId());
         task.setDocId(doc.getId());
@@ -474,24 +477,133 @@ public class DocumentBizServiceImpl implements DocumentBizService {
         task.setProgress(BigDecimal.ZERO);
         task.setProgressMsg("");
         task.setRetryCount(0);
-        kbTaskCoreService.save(task);
+        parseTaskArray.add(task);
 
-        // 2) 组装任务消息（对应 RagFlow 投递到 svr_queue 的 payload）
-        DocTaskMessage message = getDocTaskMessage(userId, doc, task.getId());
+        // 2) 计算每个任务的 digest（对应 queue_tasks 中 xxhash 指纹，用 SHA-256 替代）
+        for (KbTaskPO t : parseTaskArray) {
+            t.setDigest(computeDigest(doc, t));
+            t.setProgress(BigDecimal.ZERO);
+        }
 
-        // 3) 投递到 Redis Stream（对应 RagFlow REDIS_CONN.queue_product）
-        try {
-            String payload = OBJECT_MAPPER.writeValueAsString(message);
-            String recordId = redisService.streamAdd(
-                    DocTaskConstants.SVR_QUEUE,
-                    Map.of(DocTaskConstants.MSG_FIELD_PAYLOAD, payload));
-            if (recordId == null) {
-                throw new BizException(ResCodeEnum.SERVER_ERROR, "任务消息投递失败");
+        // 3) 复用上次任务的分块（对应 reuse_prev_task_chunks）
+        List<KbTaskPO> prevTasks = kbTaskCoreService.list(new LambdaQueryWrapper<KbTaskPO>()
+                .eq(KbTaskPO::getDocId, doc.getId()));
+        int ckNum = 0;
+        if (!CollectionUtils.isEmpty(prevTasks)) {
+            for (KbTaskPO t : parseTaskArray) {
+                ckNum += reusePrevTaskChunks(t, prevTasks);
             }
-            log.info("文档解析任务已投递, docId={}, taskId={}, recordId={}",
-                    doc.getId(), task.getId(), recordId);
-        } catch (JsonProcessingException e) {
-            throw new BizException(ResCodeEnum.SERVER_ERROR, "任务消息序列化失败");
+            // 删除旧任务记录（对应 TaskService.filter_delete）
+            kbTaskCoreService.remove(new LambdaQueryWrapper<KbTaskPO>()
+                    .eq(KbTaskPO::getDocId, doc.getId()));
+            // 删除旧任务已产生的 ES 分块（对应 docStoreConn.delete）
+            List<String> preChunkIds = new ArrayList<>();
+            for (KbTaskPO pre : prevTasks) {
+                if (StringUtils.hasText(pre.getChunkIds())) {
+                    for (String cid : pre.getChunkIds().split("\\s+")) {
+                        if (StringUtils.hasText(cid)) {
+                            preChunkIds.add(cid);
+                        }
+                    }
+                }
+            }
+            if (!preChunkIds.isEmpty()) {
+                String index = DocTaskConstants.indexName(userId);
+                if (elasticsearchService.indexExists(index)) {
+                    for (String chunkId : preChunkIds) {
+                        elasticsearchService.deleteDocument(index, chunkId);
+                    }
+                }
+            }
+        }
+
+        // 4) 回填文档分块数（对应 DocumentService.update_by_id(doc_id, {"chunk_num": ck_num})）
+        KbDocumentPO chunkNumUpdate = new KbDocumentPO();
+        chunkNumUpdate.setId(doc.getId());
+        chunkNumUpdate.setChunkCount(ckNum);
+        kbDocumentCoreService.updateById(chunkNumUpdate);
+
+        // 5) 批量入库解析任务（对应 bulk_insert_into_db(Task, parse_task_array)）
+        kbTaskCoreService.saveBatch(parseTaskArray);
+
+        // 6) 仅投递未完成任务（对应 unfinished_task_array = progress < 1.0）
+        List<KbTaskPO> unfinishedTasks = parseTaskArray.stream()
+                .filter(t -> t.getProgress() == null || t.getProgress().compareTo(BigDecimal.ONE) < 0)
+                .toList();
+
+        for (KbTaskPO unfinished : unfinishedTasks) {
+            DocTaskMessage message = getDocTaskMessage(userId, doc, unfinished.getId());
+            try {
+                String payload = OBJECT_MAPPER.writeValueAsString(message);
+                String recordId = redisService.streamAdd(
+                        DocTaskConstants.SVR_QUEUE,
+                        Map.of(DocTaskConstants.MSG_FIELD_PAYLOAD, payload));
+                if (recordId == null) {
+                    throw new BizException(ResCodeEnum.SERVER_ERROR, "任务消息投递失败");
+                }
+                log.info("文档解析任务已投递, docId={}, taskId={}, recordId={}",
+                        doc.getId(), unfinished.getId(), recordId);
+            } catch (JsonProcessingException e) {
+                throw new BizException(ResCodeEnum.SERVER_ERROR, "任务消息序列化失败");
+            }
+        }
+    }
+
+    /**
+     * 复用上次任务的分块，对应 RagFlow reuse_prev_task_chunks。
+     * <p>按 from_page + digest 匹配旧任务，命中且已完成（progress=1）且有 chunk_ids 时复用，
+     * 返回复用的分块数量；否则返回 0。</p>
+     */
+    private int reusePrevTaskChunks(KbTaskPO task, List<KbTaskPO> prevTasks) {
+        KbTaskPO matched = null;
+        for (KbTaskPO prev : prevTasks) {
+            int prevFrom = prev.getFromPage() == null ? 0 : prev.getFromPage();
+            int curFrom = task.getFromPage() == null ? 0 : task.getFromPage();
+            if (prevFrom == curFrom
+                    && task.getDigest() != null
+                    && task.getDigest().equals(prev.getDigest())) {
+                matched = prev;
+                break;
+            }
+        }
+        if (matched == null) {
+            return 0;
+        }
+        boolean done = matched.getProgress() != null
+                && matched.getProgress().compareTo(BigDecimal.ONE) >= 0;
+        if (!done || !StringUtils.hasText(matched.getChunkIds())) {
+            return 0;
+        }
+        task.setChunkIds(matched.getChunkIds());
+        task.setProgress(BigDecimal.ONE);
+        task.setProgressMsg("Reused previous task's chunks.");
+        int reused = task.getChunkIds().split("\\s+").length;
+        // 置空旧任务的 chunk_ids，避免随后删除旧 ES chunks 时误删已复用的分块
+        matched.setChunkIds("");
+        return reused;
+    }
+
+    /**
+     * 计算任务指纹，对应 RagFlow queue_tasks 中的 xxhash 指纹。
+     * <p>以文档 parser 配置 + doc_id/from_page/to_page 作为输入，用 SHA-256 生成指纹，
+     * 避免引入 xxhash 第三方依赖。</p>
+     */
+    private String computeDigest(KbDocumentPO doc, KbTaskPO task) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            md.update(String.valueOf(doc.getParserId()).getBytes(StandardCharsets.UTF_8));
+            md.update(String.valueOf(doc.getParserConfig()).getBytes(StandardCharsets.UTF_8));
+            md.update(String.valueOf(task.getDocId()).getBytes(StandardCharsets.UTF_8));
+            md.update(String.valueOf(task.getFromPage()).getBytes(StandardCharsets.UTF_8));
+            md.update(String.valueOf(task.getToPage()).getBytes(StandardCharsets.UTF_8));
+            byte[] digest = md.digest();
+            StringBuilder sb = new StringBuilder();
+            for (byte b : digest) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new BizException(ResCodeEnum.SERVER_ERROR, "任务指纹计算失败");
         }
     }
 

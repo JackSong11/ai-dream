@@ -141,7 +141,6 @@ public class ChatCompletionController {
         vo.setId(ans.getId());
         vo.setConvId(ans.getConvId());
         vo.setDialogId(ans.getDialogId());
-        vo.setAudioBinary(ans.getAudioBinary());
         return vo;
     }
 }

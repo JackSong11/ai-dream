@@ -25,6 +25,11 @@ public class KnowledgeBasePO extends BasePO {
     private String description;
 
     /**
+     * 归属的用户ID
+     */
+    private String userId;
+
+    /**
      * 包含的文档总数
      */
     private Integer docNum;

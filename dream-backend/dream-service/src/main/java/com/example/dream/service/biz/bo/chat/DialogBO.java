@@ -67,7 +67,7 @@ public class DialogBO implements Serializable {
     /**
      * 相似度阈值（对应 RagFlow dia.similarity_threshold）
      */
-    private Double similarityThreshold = 0.1;
+    private Double similarityThreshold = 0.2;
 
     /**
      * 向量相似度权重（对应 RagFlow dia.vector_similarity_weight）

@@ -38,6 +38,11 @@ public final class DocTaskConstants {
     public static final String INDEX_NAME_PREFIX = "ragflow_";
 
     /**
+     * 任务取消标记的 Redis key 后缀，对应 RagFlow has_canceled 检查的 "{task_id}-cancel"。
+     */
+    public static final String CANCEL_KEY_SUFFIX = "-cancel";
+
+    /**
      * 构建 ES 索引名，对应 RagFlow search.index_name(userId)。
      *
      * @param userId 用户 ID
@@ -45,5 +50,15 @@ public final class DocTaskConstants {
      */
     public static String indexName(String userId) {
         return INDEX_NAME_PREFIX + userId;
+    }
+
+    /**
+     * 构建任务取消标记的 Redis key，对应 RagFlow has_canceled 的 "{task_id}-cancel"。
+     *
+     * @param taskId 任务 ID
+     * @return 取消标记 key
+     */
+    public static String cancelKey(Long taskId) {
+        return taskId + CANCEL_KEY_SUFFIX;
     }
 }
