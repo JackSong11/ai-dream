@@ -65,5 +65,5 @@ public interface DocStoreConnection {
      * @param docIds 待校验的文档 id 集合（对应 chunk 的 doc_id，可能含重复）
      * @return 其中仍然存在的文档 id 集合
      */
-    Set<String> existingDocIds(Collection<String> docIds);
+    Set<Long> existingDocIds(Collection<Long> docIds);
 }

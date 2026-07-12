@@ -232,6 +232,8 @@ public class Dealer implements Retriever {
 
     /**
      * 剔除已删除文档的残留 chunk（百分百还原 RagFlow Dealer._prune_deleted_chunks）。
+     * 作为一个兜底安全网，过滤掉那些对应的“父文档”已经在数据库中被删除、但“向量分块（Chunks）”因清理延迟而依然残留在向量库中的“幽灵数据”。
+     * 通过这种方式，防止用户在聊天或检索时看到已被删除的文档内容。
      *
      * <p>收集命中 chunk 的 doc_id，若全部仍存在则不动；否则原地过滤掉孤儿 chunk，
      * 并同步更新 total / ids / fields / knnScores，保证后续 rerank / 分页 / 聚合一致。
@@ -239,34 +241,36 @@ public class Dealer implements Retriever {
      * 检索命中已删除文档的内容。</p>
      */
     private void pruneDeletedChunks(HybridSearchResult sres) {
-        Set<String> chunkDocIds = new LinkedHashSet<>();
+        Set<Long> chunkDocIds = new LinkedHashSet<>();
         for (Map<String, Object> field : sres.getFields().values()) {
             if (field == null) {
                 continue;
             }
             Object docId = field.get("doc_id");
-            if (docId != null && !String.valueOf(docId).isBlank()) {
-                chunkDocIds.add(String.valueOf(docId));
+            if (docId != null) {
+                chunkDocIds.add((Long) docId);
             }
         }
-        if (chunkDocIds.isEmpty()) {
+        if (CollectionUtils.isEmpty(chunkDocIds)) {
             return;
         }
 
-        Set<String> existingDocIds = dataStore.existingDocIds(chunkDocIds);
+        Set<Long> existingDocIds = dataStore.existingDocIds(chunkDocIds);
         // 全部存在则无需剪枝（对应 len(existing) == len(set(chunk_doc_ids))）
         if (existingDocIds.size() == chunkDocIds.size()) {
             return;
         }
 
+        // 准备好存储清洗后数据的容器
         List<String> filteredIds = new ArrayList<>();
         Map<String, Map<String, Object>> filteredFields = new LinkedHashMap<>();
         Map<String, Double> filteredKnn = new LinkedHashMap<>();
+
         int removed = 0;
         for (String chunkId : sres.getIds()) {
             Map<String, Object> chunk = sres.getFields().get(chunkId);
             Object docId = chunk == null ? null : chunk.get("doc_id");
-            if (chunk == null || docId == null || !existingDocIds.contains(String.valueOf(docId))) {
+            if (docId == null || !existingDocIds.contains((Long) docId)) {
                 removed++;
                 continue;
             }
@@ -391,7 +395,7 @@ public class Dealer implements Retriever {
         Map<String, Object> kbinfos = new HashMap<>();
         kbinfos.put("total", 0);
         kbinfos.put("chunks", new ArrayList<Map<String, Object>>());
-        kbinfos.put("doc_aggs", new HashMap<String, Object>());
+        kbinfos.put("doc_aggs",  new ArrayList<Map<String, Object>>());
         return kbinfos;
     }
 

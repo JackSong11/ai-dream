@@ -6,12 +6,14 @@ import com.example.dream.dal.po.KbDocumentPO;
 import com.example.dream.service.core.KbDocumentCoreService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import org.springframework.util.CollectionUtils;
 
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 存储抽象层的 Elasticsearch 实现（对应 RagFlow rag/utils/es_conn.py 中的 {@code ESConnection}）。
@@ -61,29 +63,19 @@ public class ElasticsearchDocStore implements DocStoreConnection {
      * 这里将其解析为主键做批量 in 查询，再以字符串形式返回以对齐 chunk.doc_id 的比较。</p>
      */
     @Override
-    public Set<String> existingDocIds(Collection<String> docIds) {
-        if (docIds == null || docIds.isEmpty()) {
+    public Set<Long> existingDocIds(Collection<Long> docIds) {
+        if (CollectionUtils.isEmpty(docIds)) {
             return new HashSet<>();
         }
         // 去重（对应 Python list(dict.fromkeys(doc_ids))）
-        Set<String> unique = new LinkedHashSet<>(docIds);
-        Set<Long> ids = new LinkedHashSet<>();
-        for (String d : unique) {
-            try {
-                ids.add(Long.parseLong(d.trim()));
-            } catch (NumberFormatException ignore) {
-                // 非法 doc_id 直接跳过，视为不存在
-            }
+        Set<Long> ids = new LinkedHashSet<>(docIds);
+        List<KbDocumentPO> kbDocumentPOS = kbDocumentCoreService.listByIds(ids);
+        if (!CollectionUtils.isEmpty(kbDocumentPOS)) {
+            return kbDocumentPOS.stream()
+                    .filter(po -> po != null && po.getId() != null)
+                    .map(KbDocumentPO::getId)
+                    .collect(Collectors.toSet());
         }
-        if (ids.isEmpty()) {
-            return new HashSet<>();
-        }
-        Set<String> existing = new HashSet<>();
-        for (KbDocumentPO po : kbDocumentCoreService.listByIds(ids)) {
-            if (po != null && po.getId() != null) {
-                existing.add(String.valueOf(po.getId()));
-            }
-        }
-        return existing;
+        return new HashSet<>();
     }
 }
