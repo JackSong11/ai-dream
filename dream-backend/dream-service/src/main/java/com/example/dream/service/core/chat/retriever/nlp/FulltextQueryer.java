@@ -1,5 +1,7 @@
 package com.example.dream.service.core.chat.retriever.nlp;
 
+import org.apache.commons.lang3.StringUtils;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -10,7 +12,7 @@ import java.util.regex.Pattern;
  * 全文查询构建器（百分百还原 RagFlow {@code rag/nlp/query.py} 的 {@code FulltextQueryer}，
  * 含其基类 {@code common/query_base.py} 的 {@code QueryBase} 工具方法）。
  *
- * <p>{@link #question} 将用户 query 转成结构化全文匹配表达式（{@link MatchTextExpr}）并返回关键词
+ * <p>{#question} 将用户 query 转成结构化全文匹配表达式（{@link MatchTextExpr}）并返回关键词
  * {@code keywords}。处理流程：中英文加空格 -> 特殊字符清洗/繁简/全半角/小写 -> {@code rmWWW} 去疑问停用词
  * -> 中/英分支：分词（{@link RagTokenizer}）+ 词权重（{@link TermWeight}）+ 同义词（{@link Synonym}）+
  * 细粒度分词 -> 组装带 boost/邻近({@code ~2})/{@code minimum_should_match} 的表达式。</p>
@@ -43,7 +45,9 @@ public final class FulltextQueryer {
     private static final Pattern SM_CLEAN = Pattern.compile(
             "[ ,\\./;'\\[\\]\\\\`~!@#$%\\^&\\*\\(\\)=\\+_<>\\?:\"\\{\\}\\|，。；‘’【】、！￥……（）——《》？：“”-]+");
 
-    /** query_fields，与 RagFlow 完全一致。 */
+    /**
+     * query_fields，与 RagFlow 完全一致。
+     */
     private final List<String> queryFields = List.of(
             "title_tks^10", "title_sm_tks^5", "important_kwd^30", "important_tks^20",
             "question_tks^20", "content_ltks^2", "content_sm_ltks");
@@ -73,51 +77,94 @@ public final class FulltextQueryer {
 
     // ==================== QueryBase 工具方法 ====================
 
-    /** 对应 QueryBase.is_chinese。 */
+    /**
+     * 对应 QueryBase.is_chinese。
+     * 通过排除法来判断一段文本（line）是否“不是纯英文”或“大概率是中文/非英文”。
+     */
     static boolean isChinese(String line) {
+        // 按一个或多个空格或制表符（Tab）切分，得到的单词/词片列表
         String[] arr = SPLIT_WS.split(line);
+        // 短文本直接放行
         if (arr.length <= 3) {
             return true;
         }
+        // 统计“非纯英文”部分的数量
         int e = 0;
         for (String t : arr) {
+            // 检查当前的词 t 是否完全由纯英文字母组成（不分大小写）。
             if (!ALPHA_ONLY.matcher(t).matches()) {
                 e++;
             }
         }
+        // 如果非英文部分的比例大于或等于 70%，函数返回 True；否则返回 False。
         return e * 1.0 / arr.length >= 0.7;
     }
 
-    /** 对应 QueryBase.sub_special_char。 */
+    /**
+     * 对应 QueryBase.sub_special_char。
+     */
     static String subSpecialChar(String line) {
         String noQuote = line.replace("'", "");
         return SUB_SPECIAL.matcher(noQuote).replaceAll("\\\\$1").trim();
     }
 
-    /** 对应 QueryBase.rmWWW。 */
+    /**
+     * 对应 QueryBase.rmWWW。
+     * 过滤掉文本中的“疑问词”和“常见虚词（停用词）”，以此来提取文本的核心关键词。
+     */
     static String rmWWW(String txt) {
+        if (StringUtils.isBlank(txt)) {
+            return txt;
+        }
         String otxt = txt;
         txt = RM_ZH.matcher(txt).replaceAll("");
         txt = RM_EN1.matcher(txt).replaceAll(" ");
         txt = RM_EN2.matcher(txt).replaceAll(" ");
-        if (txt.isEmpty()) {
+        if (StringUtils.isBlank(txt)) {
             txt = otxt;
         }
         return txt;
     }
 
-    /** 对应 QueryBase.add_space_between_eng_zh。 */
+    /**
+     * 对应 QueryBase.add_space_between_eng_zh。
+     * 在字符串中的中文与英文（或中英文数字组合）之间自动添加一个空格。
+     * 在 RAG（检索增强生成）系统中，这段代码看似只是做了小小的格式美化，但实际上它对提升检索准确率（Embedding / Tokenization）和最终大模型的生成质量有着非常关键的底层影响。它的核心作用主要体现在以下三个阶段：
+     * 1. 文本分词（Tokenization）阶段：防止语义粘连
+     *  大模型和向量模型（Embedding）在处理文本前，都需要先进行“分词”。
+     *      坏情况：如果没有空格，像 "使用GPT4模型" 这样的文本，分词器可能会把它切分成 ["使用", "GPT4模型"] 甚至把中英文混在一起当成一个怪异的未知词（OOV）。
+     *      好情况：加入空格变成 "使用 GPT4 模型" 后，分词器能够极其精准地切分为 ["使用", "GPT4", "模型"]。
+     *  为什么这很重要？ 大模型对独立 Token（如 "GPT4"）的理解，远比对粘连 Token（如 "GPT4模型"）的理解要深刻。规范的分词能让大模型在后续的理解和生成中少走弯路。
+     * 2. 向量检索（Retrieval）阶段：大幅提升召回率
+     *  RAG 的第一步是将用户的问题和知识库文档都转化为向量（Embedding），然后进行相似度匹配。绝大多数主流的 Embedding 模型，在训练时输入的数据大都保持了良好的排版规范。
+     *      搜索冲突：如果用户提问 "什么是 GPT4"（带空格），而你的知识库切片（Chunk）里存的是 "什么是GPT4"（没空格）。
+     *      后果：由于两者的分词结果不同，计算出来的向量空间距离就会变远。这会导致原本最匹配的知识库文档，因为一个小小的空格问题，排名掉到了后面，甚至根本无法被检索出来。
+     *  通过在数据清洗（ETL）阶段统一加上空格，可以确保用户输入与知识库内容在向量化时标准一致，显著提升检索的召回率（Recall）。
+     * 3. 生成与显示（Generation & UI）阶段：提升可读性
+     *  RAG 检索出内容后，会喂给大模型（LLM）让它生成最终答案。
+     *      对大模型而言：喂给它排版规范、中英有别的上下文（Context），有助于它生成逻辑更清晰、语法更规范的回复。
+     */
     static String addSpaceBetweenEngZh(String txt) {
+        // [\u4e00-\u9fa5]：这是用来匹配任意单个中文字符的 Unicode 编码范围。
+        // 捕获组 () 与 复制引用 \1 \2：圆括号把匹配到的文本分成“组”。在替换时，\1 代表第一个括号里的内容，\2 代表第二个括号里的内容，中间加个空格 " " 就实现了插入空格的目的。
+        // 1. 处理 英文+数字 紧跟 中文 的情况：匹配目标：比如 "iPhone14上市了"。替换结果：变成 "iPhone14 上市了"。
+        // 左半边 ([A-Za-z]+[0-9]+)：匹配至少一个英文字母后面紧跟至少一个数字（如 iPhone14），并存为第 1 组。
+        // 右半边 ([\u4e00-\u9fa5]+)：匹配连续的中文字符（如 上市了），并存为第 2 组。
         txt = txt.replaceAll("([A-Za-z]+[0-9]+)([\\u4e00-\\u9fa5]+)", "$1 $2");
+        // 2. 处理 纯英文 紧跟 中文 的情况
         txt = txt.replaceAll("([A-Za-z])([\\u4e00-\\u9fa5]+)", "$1 $2");
+        // 3. 处理 中文 紧跟 英文+数字 的情况
         txt = txt.replaceAll("([\\u4e00-\\u9fa5]+)([A-Za-z]+[0-9]+)", "$1 $2");
+        // 4. 处理 中文 紧跟 纯英文 的情况
         txt = txt.replaceAll("([\\u4e00-\\u9fa5]+)([A-Za-z])", "$1 $2");
         return txt;
     }
 
     // ==================== question ====================
 
-    /** question 的返回：MatchTextExpr（可能为 null）+ keywords。 */
+    /**
+     * question 的返回：MatchTextExpr（可能为 null）+ keywords。
+     */
     public static final class QuestionResult {
         public final MatchTextExpr matchExpr;
         public final List<String> keywords;
@@ -128,10 +175,6 @@ public final class FulltextQueryer {
         }
     }
 
-    public QuestionResult question(String txt) {
-        return question(txt, 0.6);
-    }
-
     /**
      * 构建全文查询（百分百还原 FulltextQueryer.question）。
      */
@@ -139,7 +182,10 @@ public final class FulltextQueryer {
         String originalQuery = txt;
         txt = addSpaceBetweenEngZh(txt);
 
-        // 清洗 Infinity ESCAPABLE 字符：tradi2simp(strQ2B(lower)) 后按正则替换为空格
+        // 文本清洗：在分词（Tokenization）之前，文本清晰能大大提升文本匹配的准确率。
+        // tokenizer.strQ2B：全角字符转半角（如 Ａ→A，１→1），确保字符统一为ASCII范围。可以搜下全角和半角的区别
+        // tokenizer.tradi2simp：繁体中文转简体中文（如 查詢→查询），统一中文表述。
+        // ESCAPABLE：用正则将所有特殊字符替换为空格。这些字符包括：
         txt = ESCAPABLE.matcher(tokenizer.tradi2simp(tokenizer.strQ2B(txt.toLowerCase())))
                 .replaceAll(" ").trim();
         String otxt = txt;
@@ -147,7 +193,6 @@ public final class FulltextQueryer {
 
         if (!isChinese(txt)) {
             // ===== 非中文分支 =====
-            txt = rmWWW(txt);
             String[] tks = tokenizer.tokenize(txt).trim().isEmpty()
                     ? new String[0] : tokenizer.tokenize(txt).trim().split("\\s+");
             List<String> keywords = new ArrayList<>();
@@ -214,7 +259,7 @@ public final class FulltextQueryer {
             }
             String query = String.join(" ", q);
             Map<String, Object> extra = new HashMap<>();
-            extra.put("original_query", originalQuery);
+            extra.put(MatchTextExpr.KEY_ORIGINAL_QUERY, originalQuery);
             return new QuestionResult(new MatchTextExpr(queryFields, query, 100, extra), keywords);
         }
 
@@ -229,9 +274,10 @@ public final class FulltextQueryer {
         return !FINE_SKIP.matcher(tk).matches();
     }
 
-    /** question 的中文分支（对应 Python 中 is_chinese 为真的后半段）。 */
+    /**
+     * question 的中文分支（对应 Python 中 is_chinese 为真的后半段）。
+     */
     private QuestionResult questionChinese(String txt, String otxt, String originalQuery, double minMatch) {
-        txt = rmWWW(txt);
         List<String> qs = new ArrayList<>();
         List<String> keywords = new ArrayList<>();
 
@@ -354,18 +400,84 @@ public final class FulltextQueryer {
                 query = otxt;
             }
             Map<String, Object> extra = new HashMap<>();
-            extra.put("minimum_should_match", minMatch);
-            extra.put("original_query", originalQuery);
+            extra.put(MatchTextExpr.KEY_MINIMUM_SHOULD_MATCH, minMatch);
+            extra.put(MatchTextExpr.KEY_ORIGINAL_QUERY, originalQuery);
             return new QuestionResult(new MatchTextExpr(queryFields, query, 100, extra), keywords);
         }
         return new QuestionResult(null, keywords);
     }
 
-    /** 格式化权重（Python f"{w}"，尽量还原其字符串表现）。 */
+    /**
+     * 格式化权重（Python f"{w}"，尽量还原其字符串表现）。
+     */
     private String formatNum(double w) {
         if (w == Math.rint(w) && !Double.isInfinite(w)) {
             return String.valueOf((long) w);
         }
         return String.valueOf(w);
+    }
+
+    // ==================== rerank 相似度（对齐 Python FulltextQueryer） ====================
+
+    /**
+     * Term 相似度（百分百还原 Python {@code FulltextQueryer.token_similarity}）。
+     *
+     * <p>将查询关键词与每个候选 chunk 的 token 列表分别转成「加权词/bigram 词典」后，
+     * 逐个计算 {@link #similarity} 得分，供 {@code Dealer.rerank_with_knn} 与外部
+     * rerank 融合。对应 Python：{@code return [self.similarity(atks, btks) for btks in btkss]}。</p>
+     *
+     * @param atks  查询关键词列表（对应 keywords）
+     * @param btkss 每个候选 chunk 的 token 列表（对应 ins_tw）
+     * @return 与每个候选的 term 相似度分数列表
+     */
+    public List<Double> tokenSimilarity(List<String> atks, List<List<String>> btkss) {
+        Map<String, Double> aDict = toWeightDict(atks);
+        List<Double> res = new ArrayList<>(btkss.size());
+        for (List<String> tks : btkss) {
+            res.add(similarity(aDict, toWeightDict(tks)));
+        }
+        return res;
+    }
+
+    /**
+     * 把 token 列表转成加权词典（对应 Python token_similarity 内部的 to_dict）。
+     *
+     * <p>规则：{@code d[t] += c*0.4}；若存在下一个词，则 {@code d[t+_t] += max(c,_c)*0.6}。
+     * 其中 (t,c) 来自 {@code tw.weights(tks, preprocess=False)}。</p>
+     */
+    private Map<String, Double> toWeightDict(List<String> tks) {
+        Map<String, Double> d = new HashMap<>();
+        List<TermWeight.TW> wts = tw.weights(new ArrayList<>(tks), false);
+        for (int i = 0; i < wts.size(); i++) {
+            String t = wts.get(i).token;
+            double c = wts.get(i).weight;
+            d.merge(t, c * 0.4, Double::sum);
+            if (i + 1 < wts.size()) {
+                String t2 = wts.get(i + 1).token;
+                double c2 = wts.get(i + 1).weight;
+                d.merge(t + t2, Math.max(c, c2) * 0.6, Double::sum);
+            }
+        }
+        return d;
+    }
+
+    /**
+     * 加权词典余弦式相似度（百分百还原 Python {@code FulltextQueryer.similarity}）。
+     *
+     * <p>对应 Python：{@code s = sum(v for k,v in qtwt if k in dtwt) + 1e-9;
+     * q = sum(qtwt.values()) + 1e-9; return s / q}。</p>
+     */
+    public double similarity(Map<String, Double> qtwt, Map<String, Double> dtwt) {
+        double s = 1e-9;
+        for (Map.Entry<String, Double> e : qtwt.entrySet()) {
+            if (dtwt.containsKey(e.getKey())) {
+                s += e.getValue();
+            }
+        }
+        double q = 1e-9;
+        for (Double v : qtwt.values()) {
+            q += v;
+        }
+        return s / q;
     }
 }

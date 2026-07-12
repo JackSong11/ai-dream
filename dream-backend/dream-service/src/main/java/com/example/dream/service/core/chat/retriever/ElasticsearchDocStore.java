@@ -4,6 +4,8 @@ import com.example.dream.integration.service.es.ElasticsearchService;
 import com.example.dream.integration.service.es.HybridSearchResult;
 import com.example.dream.dal.po.KbDocumentPO;
 import com.example.dream.service.core.KbDocumentCoreService;
+import com.example.dream.service.core.chat.retriever.nlp.MatchTextExpr;
+import com.example.dream.integration.service.es.HybridSearchRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
@@ -12,6 +14,7 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -41,17 +44,84 @@ public class ElasticsearchDocStore implements DocStoreConnection {
      */
     private final KbDocumentCoreService kbDocumentCoreService;
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>把编排层的 {@link DocStoreSearchRequest}（含 {@link MatchTextExpr}）翻译为 integration 层
+     * 的 {@link HybridSearchRequest}，委托 {@link ElasticsearchService#hybridSearch} 执行一次混合召回，
+     * 并把命中 chunk 的 {@code doc_id}/{@code kb_id} 归一化为 {@link Long}（ES 中为 keyword 字符串），
+     * 以对齐 {@code Dealer._prune_deleted_chunks} 与 {@code existingDocIds(Set<Long>)} 的类型约定。</p>
+     */
     @Override
-    public HybridSearchResult hybridSearch(List<String> indexNames,
-                                           List<Long> kbIds,
-                                           List<Long> docIds,
-                                           String question,
-                                           List<Float> queryVector,
-                                           int size,
-                                           int topk,
-                                           double similarity) {
-        return elasticsearchService.hybridSearch(indexNames, kbIds, docIds, question,
-                null, queryVector, size, topk, similarity);
+    public HybridSearchResult search(DocStoreSearchRequest req) {
+        HybridSearchRequest esReq = new HybridSearchRequest();
+        esReq.setIndexNames(req.getIdxNames());
+        esReq.setKbIds(req.getKbIds());
+        esReq.setDocIds(req.getDocIds());
+        esReq.setAvailableInt(req.getAvailableInt());
+        esReq.setSourceFields(req.getSourceFields());
+        esReq.setQueryVector(req.getQueryVector());
+        esReq.setTopk(req.getTopk());
+        esReq.setSimilarity(req.getSimilarity());
+        esReq.setOffset(req.getOffset());
+        esReq.setLimit(req.getLimit());
+
+        MatchTextExpr matchText = req.getMatchText();
+        if (matchText != null) {
+            esReq.setQueryString(matchText.getMatchingText());
+            esReq.setQueryFields(matchText.getFields());
+            esReq.setMinimumShouldMatch(matchText.getMinimumShouldMatch());
+        }
+
+        HybridSearchResult result = elasticsearchService.hybridSearch(esReq);
+        normalizeLongFields(result);
+        return result;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>直接委托 {@link ElasticsearchService#knnScore}，对首次召回的 chunk id 集合做二次纯 KNN 打分。</p>
+     */
+    @Override
+    public Map<String, Double> knnScores(List<String> idxNames,
+                                         List<Long> kbIds,
+                                         List<String> chunkIds,
+                                         List<Float> queryVector) {
+        return elasticsearchService.knnScore(idxNames, kbIds, chunkIds, queryVector);
+    }
+
+    /**
+     * 将命中 chunk 字段中的 doc_id / kb_id 归一化为 Long（ES 存 keyword 字符串）。
+     */
+    private void normalizeLongFields(HybridSearchResult result) {
+        if (result == null || CollectionUtils.isEmpty(result.getFields())) {
+            return;
+        }
+        for (Map<String, Object> field : result.getFields().values()) {
+            if (field == null) {
+                continue;
+            }
+            field.computeIfPresent("doc_id", (k, v) -> toLong(v));
+            field.computeIfPresent("kb_id", (k, v) -> toLong(v));
+        }
+    }
+
+    private Object toLong(Object v) {
+        if (v == null) {
+            return null;
+        }
+        if (v instanceof Long) {
+            return v;
+        }
+        if (v instanceof Number n) {
+            return n.longValue();
+        }
+        try {
+            return Long.parseLong(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return v;
+        }
     }
 
     /**

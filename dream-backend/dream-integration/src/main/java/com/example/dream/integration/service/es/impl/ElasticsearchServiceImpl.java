@@ -2,6 +2,7 @@ package com.example.dream.integration.service.es.impl;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.FieldValue;
+import co.elastic.clients.elasticsearch._types.SortOrder;
 import co.elastic.clients.elasticsearch._types.query_dsl.Query;
 import co.elastic.clients.elasticsearch.core.BulkResponse;
 import co.elastic.clients.elasticsearch.core.GetResponse;
@@ -10,6 +11,7 @@ import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
 import co.elastic.clients.elasticsearch.core.search.Hit;
 import com.example.dream.integration.service.es.ElasticsearchService;
+import com.example.dream.integration.service.es.HybridSearchRequest;
 import com.example.dream.integration.service.es.HybridSearchResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -255,306 +257,163 @@ public class ElasticsearchServiceImpl implements ElasticsearchService {
         }
     }
 
-    // ==================== 混合检索（全文 + 向量 KNN）====================
-
-    /**
-     * 用于承载 chunk 原始字段的 Map 类型别名（ES 反序列化目标）。
-     */
-    @SuppressWarnings("unchecked")
-    private static final Class<Map<String, Object>> MAP_CLASS = (Class<Map<String, Object>>) (Class<?>) Map.class;
-
-    /**
-     * 实现的混合检索（Hybrid Search）核心逻辑。它模拟了开源 RAG 引擎 RagFlow 的检索策略：
-     * 结合了传统的全文检索（BM25）与向量检索（KNN Dense Vector），并通过一套降级重试（Fallback）机制以及二次精准打分（Rerank/Refine）来保证召回的召回率与准确度。
-     * 四个核心阶段：构建通用过滤器，首次混合检索，空结果降级重试，向量分值修正。
-     */
     @Override
-    public HybridSearchResult hybridSearch(List<String> indexNames,
-                                           List<Long> kbIds,
-                                           List<Long> docIds,
-                                           String fulltextExpr,
-                                           String minimumShouldMatch,
-                                           List<Float> queryVector,
-                                           int size,
-                                           int topk,
-                                           double similarity) {
+    public HybridSearchResult hybridSearch(HybridSearchRequest req) {
         HybridSearchResult result = new HybridSearchResult();
-        if (CollectionUtils.isEmpty(queryVector)) {
+        if (req == null || CollectionUtils.isEmpty(req.getIndexNames())) {
             return result;
         }
-        if (CollectionUtils.isEmpty(indexNames)) {
-            return result;
-        }
-        result.setQueryVector(new ArrayList<>(queryVector));
+        try {
+            // 组装 filter（kb_id / doc_id / available_int）
+            List<Query> filters = buildFilters(req.getKbIds(), req.getDocIds(), req.getAvailableInt());
 
-        // 1. 构建通用过滤器（Filter Context）
-        // 过滤条件：kb_id in kbIds（对应 filters.kb_id），可选 doc_id in docIds（对应 filters.doc_id）
-        List<Query> filters = new ArrayList<>();
-        /* 等价下面JSON 过滤条件
-            {
-              "terms": {
-                "kb_id": [101, 102]
-              }
+            // 组装全文 should（query_string），对应 MatchTextExpr
+            List<Query> should = new ArrayList<>();
+            if (StringUtils.isNotBlank(req.getQueryString())) {
+                should.add(Query.of(q -> q.queryString(qs -> {
+                    qs.query(req.getQueryString());
+                    if (!CollectionUtils.isEmpty(req.getQueryFields())) {
+                        qs.fields(req.getQueryFields());
+                    }
+                    if (req.getMinimumShouldMatch() != null) {
+                        qs.minimumShouldMatch(String.valueOf(req.getMinimumShouldMatch()));
+                    }
+                    return qs;
+                })));
             }
-         */
-        if (!CollectionUtils.isEmpty(kbIds)) {
-            List<FieldValue> kbValues = new ArrayList<>();
-            for (Long kb : kbIds) {
-                kbValues.add(FieldValue.of(kb));
-            }
-            filters.add(Query.of(q -> q.terms(t -> t
-                    .field("kb_id")
-                    .terms(v -> v.value(kbValues)))));
-        }
-        if (!CollectionUtils.isEmpty(docIds)) {
-            List<FieldValue> docValues = new ArrayList<>();
-            for (Long d : docIds) {
-                docValues.add(FieldValue.of(d));
-            }
-            filters.add(Query.of(q -> q.terms(t -> t
-                    .field("doc_id")
-                    .terms(v -> v.value(docValues)))));
-        }
 
-        // available_int = 1 过滤（对应 RagFlow req["available_int"]=1；ES 侧 must_not range<1，即 >=1）。
-        // 我们直接以 range{gte:1} 作为 filter，与 RagFlow 语义等价（仅召回可用 chunk）。
-        // 通过 .range(...) 构建一个范围查询，指定 .gte(1.0)（Greater Than or Equal，大于等于 1.0）。
-        /*
-            {
-              "range": {
-                "available_int": {
-                  "gte": 1.0
+            Query boolQuery = Query.of(q -> q.bool(b -> {
+                if (!filters.isEmpty()) {
+                    b.filter(filters);
                 }
-              }
-            }
-         */
-        filters.add(Query.of(q -> q.range(r -> r.number(n -> n.field("available_int").gte(1.0)))));
+                if (!should.isEmpty()) {
+                    b.should(should).minimumShouldMatch("1");
+                }
+                if (should.isEmpty() && filters.isEmpty()) {
+                    b.must(m -> m.matchAll(ma -> ma));
+                }
+                return b;
+            }));
 
-        String vectorField = "q_" + queryVector.size() + "_vec";
-        boolean hasDoc = !CollectionUtils.isEmpty(docIds);
+        boolean hasVector = !CollectionUtils.isEmpty(req.getQueryVector());
+            List<Float> qv = req.getQueryVector();
 
-        // RagFlow Dealer.search（ES 分支）语义：
-        // 2. 首次混合检索（First-pass Hybrid Search）
-        // 第一次带 fusion 的混合召回：matchText(query_string, minimum_should_match=30%, boost=1-vw=0.05) + matchDense(KNN cosine, boost=vw=0.95)，FusionExpr weighted_sum weights=0.05,0.95。
-        SearchOutcome first = runHybridOnce(indexNames, filters, fulltextExpr, vectorField, queryVector,
-                size, topk, minimumShouldMatch, (float) similarity, FULLTEXT_BOOST, VECTOR_BOOST, false);
-        result.getIds().addAll(first.ids);
-        result.getFields().putAll(first.fields);
-        result.setTotal(first.total);
+            SearchResponse<Map> response = client.search(s -> {
+                s.index(req.getIndexNames())
+                        .from(req.getOffset())
+                        .size(req.getLimit())
+                        .query(boolQuery)
+                        .trackTotalHits(t -> t.enabled(true));
+                if (!CollectionUtils.isEmpty(req.getSourceFields())) {
+                    s.source(src -> src.filter(f -> f.includes(req.getSourceFields())));
+                }
+                // 向量 KNN：与全文 bool 融合（ES 会将 knn 分与 query 分相加）
+                if (hasVector) {
+                    String vecField = "q_" + qv.size() + "_vec";
+                    s.knn(k -> k.field(vecField)
+                            .queryVector(qv)
+                            .k(req.getTopk())
+                            .numCandidates(Math.max(req.getTopk(), req.getLimit()))
+                            .boost((float) req.getVectorWeight())
+                            .similarity((float) req.getSimilarity()));
+                }
+                return s;
+            }, Map.class);
 
-        // 3. 空结果降级重试（对应 Dealer.search 的 if total == 0 分支）
-        // 策略 A（有明确文档 ID 范围）：如果用户指定了看某些文件，哪怕文本和向量全对不上，也脱掉所有搜索条件，退化为纯过滤查询。把这些文件里的前几条数据直接捞出来保底。
-        // 策略 B（无明确文档范围）：放低门槛。将文本的最小匹配度降到 "10%"，并将向量的相似度门槛卡死在极低的 0.17，重新对全库发起一次广撒网的混合检索。
-        if (first.total == 0) {
-            SearchOutcome retry;
-            if (hasDoc) {
-                // res = search(src, [], filters, [], ...)：仅过滤，无全文/向量
-                retry = runHybridOnce(indexNames, filters, null, null, new ArrayList<>(),
-                        size, topk, null, 0.0f, 1.0f, 0.0f, true);
-            } else {
-                // min_match=0.1 且 matchDense.similarity=0.17 再查一次
-                retry = runHybridOnce(indexNames, filters, fulltextExpr, vectorField, queryVector,
-                        size, topk, "10%", 0.17f, FULLTEXT_BOOST, VECTOR_BOOST, false);
-            }
-            result.getIds().clear();
-            result.getFields().clear();
-            result.getIds().addAll(retry.ids);
-            result.getFields().putAll(retry.fields);
-            result.setTotal(retry.total);
-        }
-
-        // 4. 第二次纯 KNN 打分：对命中的 id 做 KNN，得到干净 cosine 分（对应 Dealer._knn_scores，similarity=0.0）。
-        // 原因：混合检索出来的原生 Elastic 分数包含了文本分和各种权重，不是纯粹的向量余弦距离，业务层很难根据这个分数做统一的阈值过滤（例如在前端判断是不是“答非所问”）。
-        // 解决：拿着这批确定被召回的 ID，单独调用 knnScores 方法，重新计算一次用户向量和这批文档的纯粹 Cosine 相似度，并塞进 result.setKnnScores 中，供上层做大模型生成前的精准过滤。
-        // todo 为什么 ES 不能一次性返回所有分数？这里需要查一下最新版本ES是不是支持同时返回全文分和向量分
-        if (!CollectionUtils.isEmpty(queryVector) && !CollectionUtils.isEmpty(result.getIds())) {
-            result.setKnnScores(knnScores(indexNames, result.getIds(), vectorField, queryVector));
+            fillResult(result, response);
+        } catch (IOException ex) {
+            throw new RuntimeException("混合检索失败: index=" + req.getIndexNames(), ex);
         }
         return result;
     }
 
-    /**
-     * 全文权重（对应 RagFlow bool_query.boost = 1.0 - vector_similarity_weight，fusion weights 首值 0.05）。
-     */
-    private static final float FULLTEXT_BOOST = 0.05f;
-
-    /**
-     * 向量权重（对应 RagFlow fusion weights 次值 0.95）。
-     */
-    private static final float VECTOR_BOOST = 0.95f;
-
-    /**
-     * 仅召回 chunk 的 _source 字段（对应 RagFlow Dealer.search 中的 src 列表，本项目按实际入库字段裁剪）。
-     */
-    private static final List<String> CHUNK_SOURCE_FIELDS = List.of(
-            "docnm_kwd", "content_ltks", "kb_id", "position_int",
-            "doc_id", "create_timestamp_flt", "available_int", "content_with_weight");
-
-    /**
-     * 单次混合召回（供第一次召回与降级重试复用）。
-     * 入参举例：
-     * {
-     *   "indexNames": ["knowledge_base_v1", "wiki_index"],
-     *   "filters": [
-     *     { "term": { "status": "published" } },
-     *     { "range": { "created_at": { "gte": "2025-01-01" } } }
-     *   ],
-     *   "question": "如何配置混合检索的权重？",
-     *   "vectorField": "content_vector",
-     *   "qv": [0.123, -0.456, 0.789, 0.012],
-     *   "size": 3,
-     *   "topk": 5,
-     *   "minShould": "75%",
-     *   "knnSimilarity": 0.6,
-     *   "fulltextBoost": 0.3,
-     *   "vectorBoost": 0.7,
-     *   "filterOnly": false
-     * }
-     *
-     * @param indexNames   索引名数组，指定要检索的 Elasticsearch 索引名称列表。支持跨索引联合查询。
-     * @param filters      过滤条件数组，强过滤条件（不参与评分，只决定去留）。
-     * @param question     全文 query（为空则走 match_all 或纯过滤）
-     * @param vectorField  向量字段名(字符串)（为空则不做 KNN）：存储向量数据的字段名。代码中用来做 KNN 向量检索。
-     * @param qv           query向量(数组): 即把用户的 question 通过 Embedding 模型转换后的浮点数数组。
-     * @param size         召回条数(整数): 最终期望 Elasticsearch 返回给你的文档数量（分页大小）。
-     * @param topk         KNN k 值(整数): KNN 向量检索时，在每个分片（Shard）上召回的最相似的邻居数量。
-     * @param minShould    (字符串/数字): 对应 ES 的 minimum_should_match。例如 "75%" 表示分词后的关键词至少要匹配上 75% 才能算命中。
-     * @param knnSimilarity (浮点数): 向量相似度阈值。只有相似度分数大于该值的文档才会被召回。
-     * @param fulltextBoost 全文 boost(浮点数): 全文检索（文本）的分数权重。
-     * @param vectorBoost   向量 boost(浮点数): 向量检索的分数权重。在 ES 混合检索中，最终得分通常是 (文本分 * fulltextBoost) + (向量分 * vectorBoost)。
-     * @param filterOnly    是否纯过滤（不带全文与向量，对应 doc_id 降级分支）(布尔值): 降级开关。如果为 true，则代码会跳过文本搜索和向量搜索，变成一个纯粹的布尔过滤查询。
-     *
-     *
-     * 出参举例：
-     * {
-     *   "total": 125,
-     *   "ids": ["doc_001", "doc_002", "doc_003"],
-     *   "fields": {
-     *     "doc_001": {
-     *       "title": "Elasticsearch 混合检索指南",
-     *       "category": "技术文档",
-     *       "content_ltks": "本文介绍如何配置混合检索的权重和参数...",
-     *       "_score": 1.452
-     *     },
-     *     "doc_002": {
-     *       "title": "RAG 系统架构设计",
-     *       "category": "架构",
-     *       "content_ltks": "在 RAG 系统中，混合检索可以显著提升召回率...",
-     *       "_score": 1.218
-     *     },
-     *     "doc_003": {
-     *       "title": "向量数据库选型",
-     *       "category": "技术文档",
-     *       "content_ltks": "合理配置 boost 权重是混合检索的关键...",
-     *       "_score": 0.985
-     *     }
-     *   }
-     * }
-     * total (长整数): 满足查询条件的总文档数（包含未在本页展示的所有数据）。对应 ES 的 response.hits().total().value()。
-     * ids (数组): 包含当前页召回的、按得分从高到低排序的文档唯一主键（_id）列表。
-     * fields (对象/Map): 这是一个以文档 id 作为 Key，文档实际内容（source）作为 Value 的复合结构。
-     *  内部字段（如 title, category, content_ltks）: 来源于代码中的 CHUNK_SOURCE_FIELDS。
-     *  由于使用了 .includes(CHUNK_SOURCE_FIELDS) 过滤，只有指定的这几个核心字段会被从 ES 数据库中取出并返回，避免了传输多余的数据。
-     *  _score (浮点数): 核心字段。代码通过 src.put("_score", ...) 把 ES 计算出的混合检索最终得分注入到了文档属性中。分数越高说明文档与查询的相关度越高。
-     * @return 单次召回结果
-     */
-    private SearchOutcome runHybridOnce(List<String> indexNames,
-                                        List<Query> filters,
-                                        String question,
-                                        String vectorField,
-                                        List<Float> qv,
-                                        int size,
-                                        int topk,
-                                        String minShould,
-                                        float knnSimilarity,
-                                        float fulltextBoost,
-                                        float vectorBoost,
-                                        boolean filterOnly) {
-        SearchOutcome outcome = new SearchOutcome();
-        try {
-            SearchResponse<Map<String, Object>> response = client.search(s -> {
-                s.index(indexNames).size(size).source(src -> src.filter(f -> f.includes(CHUNK_SOURCE_FIELDS)));
-                s.query(q -> q.bool(b -> {
-                    if (!filterOnly && StringUtils.isNotBlank(question)) {
-                        // 对应 Dealer.qryr.question -> query_string(minimum_should_match, boost=1-vw)
-                        b.must(m -> m.queryString(qs -> {
-                            qs.fields("content_ltks").query(question).boost(fulltextBoost);
-                            if (StringUtils.isNotBlank(minShould)) {
-                                qs.minimumShouldMatch(minShould);
-                            }
-                            return qs;
-                        }));
-                    } else if (!filterOnly) {
-                        // todo这里为啥要判断 !
-                        b.must(m -> m.matchAll(ma -> ma));
-                    }
-                    if (!CollectionUtils.isEmpty(filters)) {
-                        b.filter(filters);
-                    }
-                    return b;
-                }));
-                if (!filterOnly && StringUtils.isNotBlank(vectorField) && !CollectionUtils.isEmpty(qv)) {
-                    s.knn(k -> k
-                            .field(vectorField)
-                            .queryVector(qv)
-                            .k(topk)
-                            .numCandidates(Math.max(topk, size))
-                            .similarity(knnSimilarity)
-                            .boost(vectorBoost));
-                }
-                return s;
-            }, MAP_CLASS);
-
-            for (Hit<Map<String, Object>> hit : response.hits().hits()) {
-                String id = hit.id();
-                Map<String, Object> src = hit.source() == null ? new LinkedHashMap<>() : new LinkedHashMap<>(hit.source());
-                src.put("_score", hit.score() == null ? 0.0 : hit.score());
-                outcome.ids.add(id);
-                outcome.fields.put(id, src);
-            }
-            outcome.total = response.hits().total() == null ? outcome.ids.size() : response.hits().total().value();
-        } catch (IOException ex) {
-            throw new RuntimeException("混合检索失败: indices=" + indexNames, ex);
-        }
-        return outcome;
-    }
-
-    /**
-     * 单次召回的原始命中（内部载体，对应 Dealer.search 一次 dataStore.search 的结果切片）。
-     */
-    private static final class SearchOutcome {
-        long total;
-        final List<String> ids = new ArrayList<>();
-        final Map<String, Map<String, Object>> fields = new LinkedHashMap<>();
-    }
-
-    /**
-     * 对给定候选 chunk id 做纯 KNN 打分，返回 id -&gt; cosine 分。
-     * <p>对应 RagFlow Dealer._knn_scores：filter 限定 id 集合，取 _score 作为纯向量相似度。</p>
-     */
-    private Map<String, Double> knnScores(List<String> indexNames, List<String> ids,
-                                          String vectorField, List<Float> qv) {
+    @Override
+    public Map<String, Double> knnScore(List<String> indexNames,
+                                        List<Long> kbIds,
+                                        List<String> chunkIds,
+                                        List<Float> queryVector) {
         Map<String, Double> scores = new LinkedHashMap<>();
+        if (CollectionUtils.isEmpty(indexNames) || CollectionUtils.isEmpty(chunkIds)
+                || CollectionUtils.isEmpty(queryVector)) {
+            return scores;
+        }
         try {
-            Query idFilter = Query.of(q -> q.ids(i -> i.values(ids)));
-            SearchResponse<Map<String, Object>> response = client.search(s -> s
+            List<FieldValue> idValues = new ArrayList<>();
+            for (String id : chunkIds) {
+                idValues.add(FieldValue.of(id));
+            }
+            List<Query> filters = new ArrayList<>();
+            filters.add(Query.of(q -> q.terms(t -> t.field("id").terms(tv -> tv.value(idValues)))));
+            if (!CollectionUtils.isEmpty(kbIds)) {
+                List<FieldValue> kbValues = new ArrayList<>();
+                for (Long kb : kbIds) {
+                    kbValues.add(FieldValue.of(kb));
+                }
+                filters.add(Query.of(q -> q.terms(t -> t.field("kb_id").terms(tv -> tv.value(kbValues)))));
+            }
+            String vecField = "q_" + queryVector.size() + "_vec";
+            int size = chunkIds.size();
+
+            SearchResponse<Map> response = client.search(s -> s
                     .index(indexNames)
-                    .size(ids.size())
-                    .source(src -> src.fetch(false)) // src.fetch(false)字面意思是 “不要去抓取 _source 块”，所以属于 _source 内部的用户业务字段是一个都不会返回的
-                    .knn(k -> k
-                            .field(vectorField)
-                            .queryVector(qv)
-                            .k(ids.size())
-                            .numCandidates(ids.size())
-                            .similarity(0.0f) // 把相似度门槛设为 0.0。意思是不做任何拦截，只要在列表里，全都要计算出分数。
-                            .filter(idFilter)), MAP_CLASS); // 极其重要。这是 ES 8.x 的“预过滤 KNN（Pre-filtered KNN）”。ES 会先通过 idFilter 把这几个指定的文档捞出来，然后只对这几个文档执行向量距离计算。
-            for (Hit<Map<String, Object>> hit : response.hits().hits()) {
+                    .size(size)
+                    .source(src -> src.fetch(false))
+                    .knn(k -> k.field(vecField)
+                            .queryVector(queryVector)
+                            .k(size)
+                            .numCandidates(size)
+                            .filter(filters)
+                            .similarity(0.0f)), Map.class);
+
+            for (Hit<Map> hit : response.hits().hits()) {
                 scores.put(hit.id(), hit.score() == null ? 0.0 : hit.score());
             }
         } catch (IOException ex) {
-            throw new RuntimeException("KNN 二次打分失败: indices=" + indexNames, ex);
+            throw new RuntimeException("二次 KNN 打分失败: index=" + indexNames, ex);
         }
         return scores;
+    }
+
+    /**
+     * 组装 kb_id / doc_id / available_int 过滤条件。
+     */
+    private List<Query> buildFilters(List<Long> kbIds, List<Long> docIds, Integer availableInt) {
+        List<Query> filters = new ArrayList<>();
+        if (!CollectionUtils.isEmpty(kbIds)) {
+            List<FieldValue> values = new ArrayList<>();
+            for (Long kb : kbIds) {
+                values.add(FieldValue.of(kb));
+            }
+            filters.add(Query.of(q -> q.terms(t -> t.field("kb_id").terms(tv -> tv.value(values)))));
+        }
+        if (!CollectionUtils.isEmpty(docIds)) {
+            List<FieldValue> values = new ArrayList<>();
+            for (Long doc : docIds) {
+                values.add(FieldValue.of(doc));
+            }
+            filters.add(Query.of(q -> q.terms(t -> t.field("doc_id").terms(tv -> tv.value(values)))));
+        }
+        if (availableInt != null) {
+            filters.add(Query.of(q -> q.term(t -> t.field("available_int").value(availableInt))));
+        }
+        return filters;
+    }
+
+    /**
+     * 将 ES 命中填充为 {@link HybridSearchResult}（total / ids / fields，字段内含 _score）。
+     */
+    @SuppressWarnings("unchecked")
+    private void fillResult(HybridSearchResult result, SearchResponse<Map> response) {
+        long total = response.hits().total() == null ? 0L : response.hits().total().value();
+        result.setTotal(total);
+        for (Hit<Map> hit : response.hits().hits()) {
+            String id = hit.id();
+            Map<String, Object> field = hit.source() == null
+                    ? new LinkedHashMap<>() : new LinkedHashMap<>(hit.source());
+            field.put("_score", hit.score() == null ? 0.0 : hit.score());
+            result.getIds().add(id);
+            result.getFields().put(id, field);
+        }
     }
 
     /**

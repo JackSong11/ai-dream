@@ -2,6 +2,9 @@ package com.example.dream.service.core.chat.retriever;
 
 import com.example.dream.common.constant.DocTaskConstants;
 import com.example.dream.integration.service.es.HybridSearchResult;
+import com.example.dream.service.core.chat.retriever.nlp.FulltextQueryer;
+import com.example.dream.service.core.chat.retriever.nlp.MatchTextExpr;
+import com.example.dream.service.core.chat.retriever.nlp.RagTokenizer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -12,6 +15,7 @@ import org.springframework.util.CollectionUtils;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -85,17 +89,12 @@ public class Dealer implements Retriever {
             return ranks;
         }
 
-        // 用嵌入模型对 question 编码（对应 Dealer.get_vector -> emb_mdl.encode_queries）
-        List<Float> queryVector = encodeQuery(embedModel, question);
-
-        // req.page = global_offset // RERANK_LIMIT + 1, req.size = RERANK_LIMIT, req.topk = top, req.similarity
+        // 3. 组装 search 请求并执行混合召回（对应 RagFlow req 构造 + Dealer.search）。
+        //    对应 Python req：kb_ids / doc_ids / page=global_offset//RERANK_LIMIT+1 / size=RERANK_LIMIT
+        //    / question / topk=top / similarity=similarity_threshold / available_int=1
         int reqPage = globalOffset / rerankLimit + 1;
-        // hybridSearch 一次拉取足够窗口（size = reqPage * RERANK_LIMIT），再在本地按 block 取当前块，
-        // 以对齐 RagFlow「先取第 reqPage 个 block」的语义（ES 分页 from = (reqPage-1)*size）。
-        int fetchSize = reqPage * rerankLimit;
-        // sres = await self.search(req, idx_names, kb_ids, embd_mdl); sres = _knn_scores 二次打分
-        HybridSearchResult sres = dataStore.hybridSearch(
-                idxNames, kbIds, docIds, question, queryVector, fetchSize, top, similarityThreshold);
+        HybridSearchResult sres = search(question, embedModel, idxNames, kbIds, docIds,
+                reqPage, rerankLimit, top, similarityThreshold);
 
         // 剔除已删除文档的残留 chunk（对应 RagFlow Dealer._prune_deleted_chunks，在 rerank 前执行）。
         pruneDeletedChunks(sres);
@@ -105,40 +104,49 @@ public class Dealer implements Retriever {
             return ranks;
         }
 
-        // 取出当前 block（对应 ES 按 req.page 分页得到的 RERANK_LIMIT 条）
-        List<String> blockIds = blockIds(sres.getIds(), reqPage, rerankLimit);
-        if (blockIds.isEmpty()) {
-            docAggsEmpty(ranks);
-            return ranks;
+        // 4. rerank 融合打分（对应 term_similarity_weight = 1 - vector_similarity_weight）。
+        double termSimilarityWeight = 1 - vectorSimilarityWeight;
+        double[] sim;
+        double[] tsim;
+        double[] vsim;
+        if (rerankModel != null && sres.getTotal() > 0) {
+            // 外部 rerank 模型分支（对应 rerank_by_model）。当前项目未接入外部 reranker，
+            // 走桩实现（返回 term/vector 融合的占位），后续接入模型后替换。
+            RerankResult rr = rerankByModel(rerankModel, sres, question,
+                    termSimilarityWeight, vectorSimilarityWeight);
+            sim = rr.sim;
+            tsim = rr.tsim;
+            vsim = rr.vsim;
+        } else {
+            // ES 分支：二次纯 KNN 打分（对应 _knn_scores）+ rerank_with_knn 融合。
+            // 说明：Python 中还有 Infinity / OceanBase 分支，本项目底层仅 ES，故只实现 ES 路径。
+            Map<String, Double> knnScores = dataStore.knnScores(idxNames, kbIds,
+                    new ArrayList<>(sres.getIds()), sres.getQueryVector());
+            RerankResult rr = rerankWithKnn(sres, question, knnScores,
+                    termSimilarityWeight, vectorSimilarityWeight);
+            sim = rr.sim;
+            tsim = rr.tsim;
+            vsim = rr.vsim;
         }
 
-        // term_similarity_weight = 1 - vector_similarity_weight
-        double termSimilarityWeight = 1 - vectorSimilarityWeight;
-
-        // ES 分支：sim, tsim, vsim = self.rerank_with_knn(sres, question, knn_scores, tkweight, vtweight, rank_feature)
-        RerankScores scores = rerankWithKnn(sres, blockIds, question,
-                termSimilarityWeight, vectorSimilarityWeight);
-
-        // sim_np = np.array(sim); if size == 0: doc_aggs=[]; return
-        double[] sim = scores.sim;
         if (sim.length == 0) {
             docAggsEmpty(ranks);
             return ranks;
         }
 
-        // sorted_idx = np.argsort(sim * -1, kind="stable")（稳定降序）
+        // 5. 稳定降序排序（对应 np.argsort(sim * -1, kind="stable")）。
         Integer[] order = new Integer[sim.length];
         for (int i = 0; i < order.length; i++) {
             order[i] = i;
         }
-        Arrays.sort(order, (a, b) -> Double.compare(sim[b], sim[a]));
+        final double[] simRef = sim;
+        Arrays.sort(order, Comparator.comparingDouble((Integer i) -> -simRef[i]));
 
-        // post_threshold = 0.0 if vector_similarity_weight <= 0 else similarity_threshold
+        // 6. 阈值过滤（对应 post_threshold + valid_idx）。
+        //    vector_similarity_weight <= 0 时阈值对纯 term 分无意义，置 0（对应 Python post_threshold）。
         double postThreshold = vectorSimilarityWeight <= 0 ? 0.0 : similarityThreshold;
-
-        // valid_idx = [i for i in sorted_idx if sim[i] >= post_threshold]
         List<Integer> validIdx = new ArrayList<>();
-        for (Integer i : order) {
+        for (int i : order) {
             if (sim[i] >= postThreshold) {
                 validIdx.add(i);
             }
@@ -150,61 +158,75 @@ public class Dealer implements Retriever {
             return ranks;
         }
 
-        // begin = global_offset % RERANK_LIMIT; end = begin + page_size; page_idx = valid_idx[begin:end]
+        // 7. block/page 分页切片（对应 begin = global_offset % RERANK_LIMIT; end = begin + page_size）。
         int begin = globalOffset % rerankLimit;
         int end = Math.min(begin + pageSize, filteredCount);
-        List<Integer> pageIdx = begin >= filteredCount ? new ArrayList<>() : validIdx.subList(begin, end);
+        List<Integer> pageIdx = begin >= filteredCount
+                ? Collections.emptyList() : validIdx.subList(begin, end);
 
-        int dim = queryVector.size();
-        List<Float> zeroVector = new ArrayList<>(Collections.nCopies(dim, 0.0f));
+        int dim = sres.getQueryVector() == null ? 0 : sres.getQueryVector().size();
+        String vectorColumn = "q_" + dim + "_vec";
 
+        // 8. 组装 chunks（对应 for i in page_idx: ranks["chunks"].append(d)）。
         List<Map<String, Object>> chunks = chunksOf(ranks);
-        for (Integer i : pageIdx) {
-            String id = blockIds.get(i);
-            Map<String, Object> chunk = sres.getFields().getOrDefault(id, new HashMap<>());
+        List<String> ids = sres.getIds();
+        Map<String, Map<String, Object>> fields = sres.getFields();
+        for (int i : pageIdx) {
+            String id = ids.get(i);
+            Map<String, Object> chunk = fields.get(id);
+            if (chunk == null) {
+                continue;
+            }
             Map<String, Object> d = new HashMap<>();
             d.put("chunk_id", id);
-            d.put("content_ltks", chunk.getOrDefault("content_ltks", ""));
-            d.put("content_with_weight", chunk.getOrDefault("content_with_weight", ""));
-            d.put("doc_id", chunk.getOrDefault("doc_id", ""));
+            d.put("content_ltks", chunk.get("content_ltks"));
+            d.put("content_with_weight", chunk.get("content_with_weight"));
+            d.put("doc_id", chunk.get("doc_id"));
             d.put("docnm_kwd", chunk.getOrDefault("docnm_kwd", ""));
             d.put("kb_id", chunk.get("kb_id"));
             d.put("important_kwd", chunk.getOrDefault("important_kwd", new ArrayList<>()));
-            d.put("similarity", sim[i]);
-            d.put("vector_similarity", scores.vsim[i]);
-            d.put("term_similarity", scores.tsim[i]);
-            String vectorField = "q_" + dim + "_vec";
-            d.put("vector", chunk.getOrDefault(vectorField, zeroVector));
-            d.put("positions", chunk.getOrDefault("position_int", new ArrayList<>()));
-            d.put("doc_type_kwd", chunk.getOrDefault("doc_type_kwd", ""));
-            // 对齐 RagFlow retrieval 组装的其余字段（本项目暂未入库，取空默认值以保持结构一致）
             d.put("tag_kwd", chunk.getOrDefault("tag_kwd", new ArrayList<>()));
             d.put("image_id", chunk.getOrDefault("img_id", ""));
+            d.put("similarity", sim[i]);
+            d.put("vector_similarity", vsim[i]);
+            d.put("term_similarity", tsim[i]);
+            d.put("vector", chunk.getOrDefault(vectorColumn, new ArrayList<>()));
+            d.put("positions", chunk.getOrDefault("position_int", new ArrayList<>()));
+            d.put("doc_type_kwd", chunk.getOrDefault("doc_type_kwd", ""));
             d.put("mom_id", chunk.getOrDefault("mom_id", ""));
             d.put("row_id", chunk.get("row_id()"));
             chunks.add(d);
         }
 
-        // aggs：按 docnm_kwd 聚合 doc_aggs（对应 ranks["doc_aggs"] 计数并按 count 降序）
+        // 9. doc_aggs 聚合（对应 if aggs: 统计每个 doc 的命中数并按 count 降序）。
         if (aggs) {
-            Map<String, int[]> counter = new LinkedHashMap<>();
-            Map<String, Object> docIdOf = new LinkedHashMap<>();
-            for (Integer i : validIdx) {
-                String id = blockIds.get(i);
-                Map<String, Object> chunk = sres.getFields().getOrDefault(id, new HashMap<>());
-                String dnm = strOf(chunk.getOrDefault("docnm_kwd", ""));
-                counter.computeIfAbsent(dnm, k -> new int[1])[0]++;
-                docIdOf.putIfAbsent(dnm, chunk.getOrDefault("doc_id", ""));
+            Map<String, Map<String, Object>> docAggMap = new LinkedHashMap<>();
+            for (int i : validIdx) {
+                String id = ids.get(i);
+                Map<String, Object> chunk = fields.get(id);
+                if (chunk == null) {
+                    continue;
+                }
+                String dnm = String.valueOf(chunk.getOrDefault("docnm_kwd", ""));
+                Object did = chunk.get("doc_id");
+                Map<String, Object> agg = docAggMap.computeIfAbsent(dnm, k -> {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("doc_id", did);
+                    m.put("count", 0);
+                    return m;
+                });
+                agg.put("count", ((Integer) agg.get("count")) + 1);
             }
             List<Map<String, Object>> docAggs = new ArrayList<>();
-            counter.entrySet().stream()
-                    .sorted((x, y) -> Integer.compare(y.getValue()[0], x.getValue()[0]))
+            docAggMap.entrySet().stream()
+                    .sorted((a, b) -> Integer.compare((Integer) b.getValue().get("count"),
+                            (Integer) a.getValue().get("count")))
                     .forEach(e -> {
-                        Map<String, Object> agg = new HashMap<>();
-                        agg.put("doc_name", e.getKey());
-                        agg.put("doc_id", docIdOf.get(e.getKey()));
-                        agg.put("count", e.getValue()[0]);
-                        docAggs.add(agg);
+                        Map<String, Object> m = new HashMap<>();
+                        m.put("doc_name", e.getKey());
+                        m.put("doc_id", e.getValue().get("doc_id"));
+                        m.put("count", e.getValue().get("count"));
+                        docAggs.add(m);
                     });
             ranks.put("doc_aggs", docAggs);
         } else {
@@ -212,6 +234,102 @@ public class Dealer implements Retriever {
         }
 
         return ranks;
+    }
+
+    /**
+     * 混合召回（百分百还原 RagFlow {@code Dealer.search}）。
+     *
+     * <p>流程：{@code qryr.question(qst, 0.3)} 生成全文表达式 matchText + keywords ->
+     * 若 embModel 为空走纯全文召回；否则 query 向量化后走全文+KNN 混合召回 ->
+     * total==0 时降级重试（有 doc_id 则去掉全文表达式；否则 min_match=0.1、similarity=0.17 重试）->
+     * keywords 细粒度分词扩展 -> 封装 {@link HybridSearchResult}（含 keywords / queryVector）。</p>
+     */
+    private HybridSearchResult search(String question,
+                                      EmbeddingModel embModel,
+                                      List<String> idxNames,
+                                      List<Long> kbIds,
+                                      List<Long> docIds,
+                                      int page,
+                                      int size,
+                                      int topk,
+                                      double similarity) {
+        // 分页参数（对应 pg = page-1; offset = pg*ps; limit = ps）
+        int pg = Math.max(page, 1) - 1;
+        int offset = pg * size;
+
+        // 源字段（对应 Python src 默认列表）
+        List<String> src = defaultSourceFields();
+
+        // 全文表达式 + keywords（对应 matchText, keywords = qryr.question(qst, min_match=0.3)）
+        FulltextQueryer qryr = FulltextQueryer.getInstance();
+        FulltextQueryer.QuestionResult qr = qryr.question(question, 0.3);
+        MatchTextExpr matchText = qr.matchExpr;
+        List<String> keywords = qr.keywords == null ? new ArrayList<>() : new ArrayList<>(qr.keywords);
+
+        DocStoreSearchRequest req = new DocStoreSearchRequest();
+        req.setIdxNames(idxNames);
+        req.setKbIds(kbIds);
+        req.setDocIds(docIds);
+        req.setAvailableInt(1);
+        req.setSourceFields(src);
+        req.setTopk(topk);
+        req.setSimilarity(similarity);
+        req.setOffset(offset);
+        req.setLimit(size);
+
+        HybridSearchResult res;
+        List<Float> qVec = new ArrayList<>();
+        if (embModel == null) {
+            // 纯全文召回分支（对应 emb_mdl is None）
+            req.setMatchText(matchText);
+            res = dataStore.search(req);
+        } else {
+            // 混合召回分支：query 向量化（对应 get_vector -> matchDense）
+            qVec = embed(embModel, question);
+            req.setMatchText(matchText);
+            req.setQueryVector(qVec);
+            res = dataStore.search(req);
+
+            // total == 0 降级重试（对应 if total == 0）
+            if (res.getTotal() == 0) {
+                if (docIds != null && !docIds.isEmpty()) {
+                    // 有 doc_id：去掉全文/向量表达式，仅按 doc_id 过滤召回
+                    DocStoreSearchRequest retry = copyReq(req);
+                    retry.setMatchText(null);
+                    retry.setQueryVector(null);
+                    res = dataStore.search(retry);
+                } else {
+                    // 无 doc_id：min_match=0.1 重建全文表达式，similarity=0.17 重试
+                    FulltextQueryer.QuestionResult qr2 = qryr.question(question, 0.1);
+                    DocStoreSearchRequest retry = copyReq(req);
+                    retry.setMatchText(qr2.matchExpr);
+                    retry.setQueryVector(qVec);
+                    retry.setSimilarity(0.17);
+                    res = dataStore.search(retry);
+                }
+            }
+        }
+
+        // keywords 细粒度分词扩展（对应 for k in keywords: kwds.add(k); 细粒度子词加入）
+        RagTokenizer tokenizer = RagTokenizer.getInstance();
+        Set<String> kwds = new LinkedHashSet<>();
+        for (String k : keywords) {
+            kwds.add(k);
+            String fg = tokenizer.fineGrainedTokenize(k);
+            if (fg == null || fg.trim().isEmpty()) {
+                continue;
+            }
+            for (String kk : fg.trim().split("\\s+")) {
+                if (kk.length() < 2 || kwds.contains(kk)) {
+                    continue;
+                }
+                kwds.add(kk);
+            }
+        }
+
+        res.setQueryVector(qVec);
+        res.setKeywords(new ArrayList<>(kwds));
+        return res;
     }
 
     /**
@@ -289,93 +407,6 @@ public class Dealer implements Retriever {
         sres.setTotal(filteredIds.size());
     }
 
-    /**
-     * 从命中 id 列表中取第 reqPage 个 block（每 block rerankLimit 条），对应 ES 按 req.page 分页。
-     */
-    private List<String> blockIds(List<String> ids, int reqPage, int rerankLimit) {
-        int from = (reqPage - 1) * rerankLimit;
-        if (from >= ids.size()) {
-            return new ArrayList<>();
-        }
-        int to = Math.min(from + rerankLimit, ids.size());
-        return new ArrayList<>(ids.subList(from, to));
-    }
-
-    /**
-     * 用嵌入模型对 query 编码为向量（对应 Dealer.get_vector -> emb_mdl.encode_queries）。
-     */
-    private List<Float> encodeQuery(Object embedModel, String question) {
-        List<Float> vec = new ArrayList<>();
-        if (embedModel instanceof EmbeddingModel em) {
-            float[] arr = em.embed(question);
-            for (float v : arr) {
-                vec.add(v);
-            }
-        }
-        return vec;
-    }
-
-    /**
-     * 混合检索结果的 rerank（百分百还原 RagFlow Dealer.rerank_with_knn，与具体引擎无关）。
-     *
-     * <p>sim = tkweight * tksim + vtweight * vtsim + rank_fea。其中：
-     * <ul>
-     *   <li>tksim：query 关键词与 chunk token 集合的 term 相似度（content_ltks 空格分词做交集占比近似，
-     *       对应 qryr.token_similarity 的语义）；</li>
-     *   <li>vtsim：二次纯 KNN 的 cosine 向量分（对应 knn_scores[chunk_id]）；</li>
-     *   <li>rank_fea：tag 特征 + pagerank，本项目暂无，恒为 0（对应 _rank_feature_scores 无特征分支）。</li>
-     * </ul>
-     * token 权重放大与 RagFlow 一致：content + title*2 + important*5 + question*6，本项目仅有 content_ltks。</p>
-     */
-    private RerankScores rerankWithKnn(HybridSearchResult sres, List<String> ids, String query,
-                                       double tkweight, double vtweight) {
-        // _, keywords = self.qryr.question(query)：以空格切分作为关键词近似
-        Set<String> keywords = new LinkedHashSet<>();
-        for (String w : query.toLowerCase().split("\\s+")) {
-            if (!w.isBlank()) {
-                keywords.add(w);
-            }
-        }
-
-        int n = ids.size();
-        double[] tksim = new double[n];
-        double[] vtsim = new double[n];
-        double[] sim = new double[n];
-        for (int i = 0; i < n; i++) {
-            String id = ids.get(i);
-            Map<String, Object> field = sres.getFields().getOrDefault(id, new HashMap<>());
-            // content_ltks + title_tks*2 + important_kwd*5 + question_tks*6（本项目仅 content_ltks）
-            List<String> tks = new ArrayList<>();
-            for (String w : strOf(field.getOrDefault("content_ltks", "")).toLowerCase().split("\\s+")) {
-                if (!w.isBlank()) {
-                    tks.add(w);
-                }
-            }
-            tksim[i] = tokenSimilarity(keywords, tks);
-            vtsim[i] = sres.getKnnScores().getOrDefault(id, 0.0);
-            // rank_fea = 0（本项目暂无 tag_fea / pagerank）
-            sim[i] = tkweight * tksim[i] + vtweight * vtsim[i];
-        }
-        return new RerankScores(sim, tksim, vtsim);
-    }
-
-    /**
-     * term 相似度近似（对应 RagFlow FulltextQueryer.token_similarity 的语义简化）。
-     * <p>无 idf 权重时退化为「命中关键词占关键词总数的比例」，取值 [0,1]。</p>
-     */
-    private double tokenSimilarity(Set<String> keywords, List<String> tks) {
-        if (keywords.isEmpty() || tks == null || tks.isEmpty()) {
-            return 0.0;
-        }
-        Set<String> tkSet = new HashSet<>(tks);
-        int hit = 0;
-        for (String k : keywords) {
-            if (tkSet.contains(k)) {
-                hit++;
-            }
-        }
-        return (double) hit / keywords.size();
-    }
 
     /**
      * 将 ranks 的 doc_aggs 置为空列表（对应 RagFlow ranks["doc_aggs"] = []）。
@@ -395,34 +426,191 @@ public class Dealer implements Retriever {
         Map<String, Object> kbinfos = new HashMap<>();
         kbinfos.put("total", 0);
         kbinfos.put("chunks", new ArrayList<Map<String, Object>>());
-        kbinfos.put("doc_aggs",  new ArrayList<Map<String, Object>>());
+        kbinfos.put("doc_aggs", new ArrayList<Map<String, Object>>());
         return kbinfos;
     }
 
     /**
-     * 取 kbinfos 中的 chunks 列表。
+     * 取 ranks 中的 chunks 列表（对应 ranks["chunks"]）。
      */
     @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> chunksOf(Map<String, Object> kbinfos) {
-        return (List<Map<String, Object>>) kbinfos.get("chunks");
-    }
-
-    private String strOf(Object o) {
-        return o == null ? "" : String.valueOf(o);
+    private List<Map<String, Object>> chunksOf(Map<String, Object> ranks) {
+        Object v = ranks.get("chunks");
+        if (!(v instanceof List)) {
+            List<Map<String, Object>> list = new ArrayList<>();
+            ranks.put("chunks", list);
+            return list;
+        }
+        return (List<Map<String, Object>>) v;
     }
 
     /**
-     * rerank 打分结果（对应 RagFlow rerank_with_knn 返回的 sim, tsim, vsim 三元组）。
+     * search 默认源字段（对应 RagFlow Dealer.search 的 src 默认列表）。
      */
-    private static final class RerankScores {
+    private List<String> defaultSourceFields() {
+        return new ArrayList<>(Arrays.asList(
+                "docnm_kwd", "content_ltks", "kb_id", "img_id", "title_tks", "important_kwd",
+                "position_int", "doc_id", "chunk_order_int", "page_num_int", "top_int",
+                "create_timestamp_flt", "knowledge_graph_kwd", "question_kwd", "question_tks",
+                "doc_type_kwd", "available_int", "content_with_weight", "mom_id"));
+    }
+
+    /**
+     * 浅拷贝 search 请求（用于 total==0 降级重试时局部改字段，不污染原请求）。
+     */
+    private DocStoreSearchRequest copyReq(DocStoreSearchRequest src) {
+        DocStoreSearchRequest c = new DocStoreSearchRequest();
+        c.setIdxNames(src.getIdxNames());
+        c.setKbIds(src.getKbIds());
+        c.setDocIds(src.getDocIds());
+        c.setAvailableInt(src.getAvailableInt());
+        c.setSourceFields(src.getSourceFields());
+        c.setMatchText(src.getMatchText());
+        c.setQueryVector(src.getQueryVector());
+        c.setTopk(src.getTopk());
+        c.setSimilarity(src.getSimilarity());
+        c.setOffset(src.getOffset());
+        c.setLimit(src.getLimit());
+        return c;
+    }
+
+    /**
+     * query 向量化（对应 RagFlow Dealer.get_vector -> emb_mdl.encode_queries）。
+     */
+    private List<Float> embed(EmbeddingModel embModel, String text) {
+        float[] raw = embModel.embed(text);
+        List<Float> vec = new ArrayList<>(raw.length);
+        for (float v : raw) {
+            vec.add(v);
+        }
+        return vec;
+    }
+
+    /**
+     * rerank 融合结果三元组（对应 Python (sim, tsim, vsim)）。
+     */
+    private static final class RerankResult {
         final double[] sim;
         final double[] tsim;
         final double[] vsim;
 
-        RerankScores(double[] sim, double[] tsim, double[] vsim) {
+        RerankResult(double[] sim, double[] tsim, double[] vsim) {
             this.sim = sim;
             this.tsim = tsim;
             this.vsim = vsim;
+        }
+    }
+
+    /**
+     * ES 路径 rerank（百分百还原 RagFlow {@code Dealer.rerank_with_knn}）。
+     *
+     * <p>用二次 KNN 得到的向量分（knnScores）与本地 term 相似度（{@code FulltextQueryer.token_similarity}）
+     * 按权重融合：{@code sim = tkweight*tksim + vtweight*vtsim (+ rank_fea)}。rank_feature 打分本项目
+     * 暂以 0 处理（pagerank/tag_fea 未接入），保持结构一致。</p>
+     */
+    private RerankResult rerankWithKnn(HybridSearchResult sres, String query,
+                                       Map<String, Double> knnScores,
+                                       double tkweight, double vtweight) {
+        FulltextQueryer qryr = FulltextQueryer.getInstance();
+        List<String> keywords = qryr.question(query, 0.6).keywords;
+
+        List<String> ids = sres.getIds();
+        List<List<String>> insTw = buildInsTw(sres);
+        List<Double> tksim = qryr.tokenSimilarity(keywords, insTw);
+
+        int n = ids.size();
+        double[] sim = new double[n];
+        double[] tsim = new double[n];
+        double[] vsim = new double[n];
+        for (int i = 0; i < n; i++) {
+            double t = i < tksim.size() ? tksim.get(i) : 0.0;
+            double v = knnScores.getOrDefault(ids.get(i), 0.0);
+            tsim[i] = t;
+            vsim[i] = v;
+            sim[i] = tkweight * t + vtweight * v;
+        }
+        return new RerankResult(sim, tsim, vsim);
+    }
+
+    /**
+     * 外部 rerank 模型分支（对应 RagFlow {@code Dealer.rerank_by_model}）。
+     *
+     * <p>本项目暂未接入外部 reranker，走保守回退：向量分取二次 KNN、term 分取 token_similarity，
+     * 按权重融合，行为与无模型时一致，待接入模型后替换 vtsim 的来源。</p>
+     */
+    private RerankResult rerankByModel(Object rerankModel, HybridSearchResult sres, String query,
+                                       double tkweight, double vtweight) {
+        // 保守回退：向量分沿用 sres 已有的二次 KNN 分（未接入外部 reranker 时通常为空 -> vsim 视为 0），
+        // term 分用 token_similarity，按权重融合。待接入模型后，替换 vtsim 为 rerank 模型输出。
+        Map<String, Double> knnScores = sres.getKnnScores() == null
+                ? new HashMap<>() : sres.getKnnScores();
+        return rerankWithKnn(sres, query, knnScores, tkweight, vtweight);
+    }
+
+    /**
+     * 构造每个候选 chunk 的加权 token 列表（对应 rerank 中 ins_tw 的组装）。
+     *
+     * <p>规则：{@code content_ltks + title_tks*2 + important_kwd*5 + question_tks*6}。</p>
+     */
+    private List<List<String>> buildInsTw(HybridSearchResult sres) {
+        List<List<String>> insTw = new ArrayList<>();
+        for (String id : sres.getIds()) {
+            Map<String, Object> field = sres.getFields().get(id);
+            List<String> tks = new ArrayList<>();
+            if (field != null) {
+                tks.addAll(dedupSplit(field.get("content_ltks")));
+                addRepeat(tks, splitTokens(field.get("title_tks")), 2);
+                addRepeat(tks, asStringList(field.get("important_kwd")), 5);
+                addRepeat(tks, splitTokens(field.get("question_tks")), 6);
+            }
+            insTw.add(tks);
+        }
+        return insTw;
+    }
+
+    /**
+     * 保序去重后按空格拆词（对应 content_ltks 的 OrderedDict.fromkeys 处理）。
+     */
+    private List<String> dedupSplit(Object v) {
+        List<String> out = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+        for (String t : splitTokens(v)) {
+            if (seen.add(t)) {
+                out.add(t);
+            }
+        }
+        return out;
+    }
+
+    private List<String> splitTokens(Object v) {
+        if (v == null) {
+            return new ArrayList<>();
+        }
+        String s = String.valueOf(v).trim();
+        if (s.isEmpty()) {
+            return new ArrayList<>();
+        }
+        return new ArrayList<>(Arrays.asList(s.split("\\s+")));
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> asStringList(Object v) {
+        List<String> out = new ArrayList<>();
+        if (v instanceof List<?> list) {
+            for (Object o : list) {
+                if (o != null) {
+                    out.add(String.valueOf(o));
+                }
+            }
+        } else if (v instanceof String s && !s.isEmpty()) {
+            out.add(s);
+        }
+        return out;
+    }
+
+    private void addRepeat(List<String> target, List<String> src, int times) {
+        for (int i = 0; i < times; i++) {
+            target.addAll(src);
         }
     }
 }
