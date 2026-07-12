@@ -1466,6 +1466,28 @@ public class DocumentTaskHandler {
         task.setProgress(progress);
         task.setProgressMsg(message);
         kbTaskCoreService.updateById(task);
+
+        // 对应 RagFlow set_progress：同步回写文档 progress / progress_msg，供前端轮询列表展示进度条。
+        // progress_msg 采用追加语义（带时间戳），与 RagFlow set_progress 累积日志一致。
+        KbDocumentPO doc = new KbDocumentPO();
+        doc.setId(msg.getDocId());
+        doc.setProgress(progress);
+        doc.setProgressMsg(appendProgressMsg(msg.getDocId(), message));
+        kbDocumentCoreService.updateById(doc);
+    }
+
+    /**
+     * 追加一条带时间戳的进度日志到文档 progress_msg 末尾（对应 RagFlow set_progress 的日志累积）。
+     */
+    private String appendProgressMsg(Long docId, String message) {
+        KbDocumentPO cur = kbDocumentCoreService.getById(docId);
+        String prev = cur == null ? null : cur.getProgressMsg();
+        if (message == null || message.isBlank()) {
+            return prev;
+        }
+        String line = java.time.LocalDateTime.now()
+                .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")) + " " + message;
+        return (prev == null || prev.isBlank()) ? line : prev + "\n" + line;
     }
 
     /**
@@ -1480,6 +1502,7 @@ public class DocumentTaskHandler {
         LambdaUpdateWrapper<KbDocumentPO> docUpdate = new LambdaUpdateWrapper<KbDocumentPO>()
                 .eq(KbDocumentPO::getId, docId)
                 .set(KbDocumentPO::getRun, TaskStatusEnum.DONE.getValue())
+                .set(KbDocumentPO::getProgress, BigDecimal.ONE)
                 .setSql("chunk_count = IFNULL(chunk_count, 0) + " + chunkCount)
                 .setSql("token_count = IFNULL(token_count, 0) + " + tokenCount);
         kbDocumentCoreService.update(docUpdate);
@@ -1502,6 +1525,7 @@ public class DocumentTaskHandler {
             KbDocumentPO doc = new KbDocumentPO();
             doc.setId(msg.getDocId());
             doc.setRun(TaskStatusEnum.FAIL.getValue());
+            doc.setProgress(PROGRESS_FAIL);
             doc.setErrorMsg(errorMsg);
             kbDocumentCoreService.updateById(doc);
 

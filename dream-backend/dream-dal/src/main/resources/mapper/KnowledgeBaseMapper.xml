@@ -6,6 +6,10 @@
         <id property="id" column="id" jdbcType="BIGINT"/>
         <result property="name" column="name" jdbcType="VARCHAR"/>
         <result property="description" column="description" jdbcType="VARCHAR"/>
+        <result property="userId" column="user_id" jdbcType="VARCHAR"/>
+        <result property="permission" column="permission" jdbcType="VARCHAR"/>
+        <result property="parserId" column="parser_id" jdbcType="VARCHAR"/>
+        <result property="parserConfig" column="parser_config" jdbcType="VARCHAR"/>
         <result property="docNum" column="doc_num" jdbcType="INTEGER"/>
         <result property="tokenNum" column="token_num" jdbcType="INTEGER"/>
         <result property="chunkNum" column="chunk_num" jdbcType="INTEGER"/>

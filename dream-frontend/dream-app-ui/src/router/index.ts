@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router'
 import { tokenStore } from '../api'
 
 const routes: RouteRecordRaw[] = [
@@ -16,11 +16,29 @@ const routes: RouteRecordRaw[] = [
     name: 'home',
     component: () => import('../views/Home.vue'),
     meta: { requiresAuth: true }
+  },
+  {
+    path: '/knowledge-base',
+    name: 'knowledge-base',
+    component: () => import('../views/KnowledgeBase.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/knowledge-base/:datasetId/documents',
+    name: 'documents',
+    component: () => import('../views/Documents.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/chat',
+    name: 'chat',
+    component: () => import('../views/Chat.vue'),
+    meta: { requiresAuth: true }
   }
 ]
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHashHistory(),
   routes
 })
 

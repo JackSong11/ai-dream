@@ -25,9 +25,24 @@ public class KnowledgeBasePO extends BasePO {
     private String description;
 
     /**
-     * 归属的用户ID
+     * 归属的用户ID（对应 RagFlow tenant_id）
      */
     private String userId;
+
+    /**
+     * 可见性权限，me/team（对应 RagFlow permission）
+     */
+    private String permission;
+
+    /**
+     * 默认解析器 / 分块方法（对应 RagFlow parser_id / chunk_method）
+     */
+    private String parserId;
+
+    /**
+     * 默认解析器配置（JSON 字符串，对应 RagFlow parser_config）
+     */
+    private String parserConfig;
 
     /**
      * 包含的文档总数

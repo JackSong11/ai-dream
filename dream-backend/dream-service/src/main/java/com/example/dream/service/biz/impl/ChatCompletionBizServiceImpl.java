@@ -18,6 +18,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 
@@ -44,6 +45,13 @@ public class ChatCompletionBizServiceImpl implements ChatCompletionBizService {
     private final ConversationCoreService conversationCoreService;
     private final AsyncChatService asyncChatService;
     private final ObjectMapper objectMapper;
+
+    /**
+     * 系统默认聊天模型 ID，取自 spring.ai.openai.chat.model。
+     * <p>本系统无租户概念，仅按 userId 维度使用，未显式指定 llm_id 时回退到该默认模型。</p>
+     */
+    @Value("${spring.ai.openai.chat.model:}")
+    private String defaultChatModel;
 
     /**
      * 会话运行时上下文，聚合本轮编排所需的对象，减少方法间参数传递。
@@ -91,13 +99,18 @@ public class ChatCompletionBizServiceImpl implements ChatCompletionBizService {
 
         CompletionContext ctx = prepare(req, userId, false);
         AtomicReference<ChatAnswerBO> holder = new AtomicReference<>();
+        // 对应 Python: async for ans in async_chat(...): answer = _format_answer(ans);
+        //             if conv is not None: update_by_id(...); break
+        // 仅取第一个结果并结构化，conv 非空时立即持久化（persistConversation 内部已判空）。
         asyncChatService.asyncChat(ctx.dialog, ctx.modelMessages, false, ctx.convId, ctx.extraParams, ans -> {
             if (holder.get() == null) {
                 holder.set(formatAnswer(ctx, ans));
                 persistConversation(ctx);
             }
         });
-        return holder.get();
+        // 对应 Python: return get_json_result(data=_sanitize_json_floats(answer))
+        // 清洗返回结果中的 NaN/Infinity 浮点值，替换为 null，保证输出为合法 JSON。
+        return sanitizeJsonFloats(holder.get());
     }
 
     /**
@@ -309,6 +322,64 @@ public class ChatCompletionBizServiceImpl implements ChatCompletionBizService {
         return null;
     }
 
+    /**
+     * 清洗答案对象中的 NaN/Infinity 浮点值（对应 RagFlow _sanitize_json_floats）。
+     *
+     * <p>Python 中在返回前对整个 answer dict 递归清洗，将 NaN/Infinity 替换为 None（Java 中为 null），
+     * 以保证输出为符合 RFC 8259 的合法 JSON（检索相似度分数在聚合为空或分母为零时可能变为 NaN）。
+     * 这里对 ChatAnswerBO 中承载动态数据的 reference 与 extra 两个 Map 结构递归清洗。</p>
+     */
+    private ChatAnswerBO sanitizeJsonFloats(ChatAnswerBO ans) {
+        if (ans == null) {
+            return null;
+        }
+        if (ans.getReference() != null) {
+            ans.setReference(sanitizeMap(ans.getReference()));
+        }
+        if (ans.getExtra() != null) {
+            ans.setExtra(sanitizeMap(ans.getExtra()));
+        }
+        return ans;
+    }
+
+    /**
+     * 递归清洗任意对象中的 NaN/Infinity 浮点值（对应 _sanitize_json_floats 的递归主体）。
+     */
+    private Object sanitizeValue(Object obj) {
+        if (obj == null) {
+            return null;
+        }
+        // 对应 Python: try math.isnan/isinf -> return None
+        if (obj instanceof Float f) {
+            return (f.isNaN() || f.isInfinite()) ? null : obj;
+        }
+        if (obj instanceof Double d) {
+            return (d.isNaN() || d.isInfinite()) ? null : obj;
+        }
+        if (obj instanceof Map<?, ?> map) {
+            return sanitizeMap(map);
+        }
+        if (obj instanceof java.util.List<?> list) {
+            List<Object> result = new ArrayList<>(list.size());
+            for (Object item : list) {
+                result.add(sanitizeValue(item));
+            }
+            return result;
+        }
+        return obj;
+    }
+
+    /**
+     * 递归清洗 Map 中的 NaN/Infinity 浮点值（对应字典分支）。
+     */
+    private Map<String, Object> sanitizeMap(Map<?, ?> map) {
+        Map<String, Object> result = new HashMap<>();
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            result.put(String.valueOf(entry.getKey()), sanitizeValue(entry.getValue()));
+        }
+        return result;
+    }
+
     // ==================== 消息规范化 ====================
 
     /**
@@ -419,13 +490,13 @@ public class ChatCompletionBizServiceImpl implements ChatCompletionBizService {
     }
 
     /**
-     * 解析租户默认聊天模型 ID（对应 TenantService.get_by_id(...).llm_id）。
+     * 解析默认聊天模型 ID。
      *
-     * <p>待模型/租户服务接入后返回真实默认模型；当前返回 null，触发上层无默认模型的错误分支。</p>
+     * <p>本系统无租户概念（仅按 userId 使用），当请求与 dialog 均未指定 llm_id 时，
+     * 回退到配置文件中 spring.ai.openai.chat.model 定义的默认模型。</p>
      */
-    private String resolveTenantDefaultLlmId(String tenantId) {
-        // TODO 接入租户服务后返回 tenant.llm_id
-        return null;
+    private String resolveTenantDefaultLlmId(String userId) {
+        return defaultChatModel;
     }
 
     // ==================== 会话持久化 ====================

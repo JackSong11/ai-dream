@@ -9,6 +9,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.example.dream.common.enums.document.DocStatusEnum;
 import com.example.dream.common.enums.document.FileTypeEnum;
 import com.example.dream.common.enums.document.ParserTypeEnum;
 import com.example.dream.common.enums.document.TaskStatusEnum;
@@ -214,6 +215,8 @@ public class DocumentBizServiceImpl implements DocumentBizService {
         doc.setObjectKey(objectKey);
         doc.setSize(size);
         doc.setRun(TaskStatusEnum.UNSTART.getValue());
+        // 文档状态，对应 RagFlow StatusEnum.VALID("1")，标识文档有效可用
+        doc.setStatus(DocStatusEnum.VALID.getValue());
         doc.setChunkCount(0);
         doc.setTokenCount(0);
         return doc;
@@ -325,6 +328,8 @@ public class DocumentBizServiceImpl implements DocumentBizService {
         KbDocumentPO info = new KbDocumentPO();
         info.setId(doc.getId());
         info.setRun(run);
+        info.setProgress(BigDecimal.ZERO);
+        info.setProgressMsg("");
         if (rerunWithDelete) {
             // 对应 Python: info["progress_msg"]=""; info["chunk_num"]=0; info["token_num"]=0
             info.setChunkCount(0);

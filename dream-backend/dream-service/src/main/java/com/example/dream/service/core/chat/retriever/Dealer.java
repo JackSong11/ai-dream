@@ -45,6 +45,22 @@ import java.util.Set;
 public class Dealer implements Retriever {
 
     /**
+     * pagerank 特征字段名（对应 RagFlow common.constants.PAGERANK_FLD = "pagerank_fea"）。
+     */
+    private static final String PAGERANK_FLD = "pagerank_fea";
+
+    /**
+     * tag 特征字段名（对应 RagFlow common.constants.TAG_FLD = "tag_feas"）。
+     */
+    private static final String TAG_FLD = "tag_feas";
+
+    /**
+     * JSON 解析器（用于解析 chunk 的 tag_feas 字符串，对应 parse_tag_features 中的 json.loads）。
+     */
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON_MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /**
      * 存储抽象层（对应 RagFlow Dealer.dataStore，类型为抽象基类 DocStoreConnection）。
      * <p>编排层只依赖此抽象，不感知底层引擎；当前注入实现为 {@link ElasticsearchDocStore}。</p>
      */
@@ -113,7 +129,7 @@ public class Dealer implements Retriever {
             // 外部 rerank 模型分支（对应 rerank_by_model）。当前项目未接入外部 reranker，
             // 走桩实现（返回 term/vector 融合的占位），后续接入模型后替换。
             RerankResult rr = rerankByModel(rerankModel, sres, question,
-                    termSimilarityWeight, vectorSimilarityWeight);
+                    termSimilarityWeight, vectorSimilarityWeight, rankFeature);
             sim = rr.sim;
             tsim = rr.tsim;
             vsim = rr.vsim;
@@ -123,7 +139,7 @@ public class Dealer implements Retriever {
             Map<String, Double> knnScores = dataStore.knnScores(idxNames, kbIds,
                     new ArrayList<>(sres.getIds()), sres.getQueryVector());
             RerankResult rr = rerankWithKnn(sres, question, knnScores,
-                    termSimilarityWeight, vectorSimilarityWeight);
+                    termSimilarityWeight, vectorSimilarityWeight, rankFeature);
             sim = rr.sim;
             tsim = rr.tsim;
             vsim = rr.vsim;
@@ -452,7 +468,8 @@ public class Dealer implements Retriever {
                 "docnm_kwd", "content_ltks", "kb_id", "img_id", "title_tks", "important_kwd",
                 "position_int", "doc_id", "chunk_order_int", "page_num_int", "top_int",
                 "create_timestamp_flt", "knowledge_graph_kwd", "question_kwd", "question_tks",
-                "doc_type_kwd", "available_int", "content_with_weight", "mom_id"));
+                "doc_type_kwd", "available_int", "content_with_weight", "mom_id",
+                PAGERANK_FLD, TAG_FLD, "row_id()"));
     }
 
     /**
@@ -510,13 +527,17 @@ public class Dealer implements Retriever {
      */
     private RerankResult rerankWithKnn(HybridSearchResult sres, String query,
                                        Map<String, Double> knnScores,
-                                       double tkweight, double vtweight) {
+                                       double tkweight, double vtweight,
+                                       Object rankFeature) {
         FulltextQueryer qryr = FulltextQueryer.getInstance();
         List<String> keywords = qryr.question(query, 0.6).keywords;
 
         List<String> ids = sres.getIds();
         List<List<String>> insTw = buildInsTw(sres);
         List<Double> tksim = qryr.tokenSimilarity(keywords, insTw);
+
+        // rank feature 打分（对应 rank_fea = self._rank_feature_scores(rank_feature, sres)）
+        double[] rankFea = rankFeatureScores(rankFeature, sres);
 
         int n = ids.size();
         double[] sim = new double[n];
@@ -527,7 +548,8 @@ public class Dealer implements Retriever {
             double v = knnScores.getOrDefault(ids.get(i), 0.0);
             tsim[i] = t;
             vsim[i] = v;
-            sim[i] = tkweight * t + vtweight * v;
+            // 对应 sim = tkweight * tksim + vtweight * vtsim + rank_fea
+            sim[i] = tkweight * t + vtweight * v + rankFea[i];
         }
         return new RerankResult(sim, tsim, vsim);
     }
@@ -539,12 +561,12 @@ public class Dealer implements Retriever {
      * 按权重融合，行为与无模型时一致，待接入模型后替换 vtsim 的来源。</p>
      */
     private RerankResult rerankByModel(Object rerankModel, HybridSearchResult sres, String query,
-                                       double tkweight, double vtweight) {
+                                       double tkweight, double vtweight, Object rankFeature) {
         // 保守回退：向量分沿用 sres 已有的二次 KNN 分（未接入外部 reranker 时通常为空 -> vsim 视为 0），
         // term 分用 token_similarity，按权重融合。待接入模型后，替换 vtsim 为 rerank 模型输出。
         Map<String, Double> knnScores = sres.getKnnScores() == null
                 ? new HashMap<>() : sres.getKnnScores();
-        return rerankWithKnn(sres, query, knnScores, tkweight, vtweight);
+        return rerankWithKnn(sres, query, knnScores, tkweight, vtweight, rankFeature);
     }
 
     /**
@@ -611,6 +633,216 @@ public class Dealer implements Retriever {
     private void addRepeat(List<String> target, List<String> src, int times) {
         for (int i = 0; i < times; i++) {
             target.addAll(src);
+        }
+    }
+
+    /**
+     * rank feature 打分（百分百还原 RagFlow {@code Dealer._rank_feature_scores}）。
+     *
+     * <p>综合两部分：
+     * <ol>
+     *   <li>pagerank 分：直接取每个 chunk 的 {@code pagerank_fea} 字段（缺省 0），作为基础加分；</li>
+     *   <li>tag feature 分：将 query 侧的 rank_feature（{@code query_rfea}，来自 tag_query）与 chunk 侧
+     *       的 {@code tag_feas} 做归一化余弦式打分，再放大 10 倍。</li>
+     * </ol>
+     * 最终返回 {@code rank_fea * 10 + pageranks}。当 query_rfea 为空或其模长为 0 时，只返回 pageranks。</p>
+     *
+     * <p>对应 Python 常量：PAGERANK_FLD = "pagerank_fea"，TAG_FLD = "tag_feas"。</p>
+     */
+    private double[] rankFeatureScores(Object rankFeature, HybridSearchResult sres) {
+        List<String> ids = sres.getIds();
+        Map<String, Map<String, Object>> fields = sres.getFields();
+        int n = ids.size();
+
+        // pageranks：每个 chunk 的 pagerank_fea（对应 pageranks.append(field.get(PAGERANK_FLD, 0))）
+        double[] pageranks = new double[n];
+        for (int i = 0; i < n; i++) {
+            Map<String, Object> chunk = fields.get(ids.get(i));
+            pageranks[i] = chunk == null ? 0.0 : toDouble(chunk.get(PAGERANK_FLD), 0.0);
+        }
+
+        // query 侧 rank_feature（对应 query_rfea）
+        Map<String, Double> queryRfea = asRankFeature(rankFeature);
+
+        // query_rfea 为空 -> 返回 pageranks（对应 if not query_rfea: return 0 + pageranks）
+        if (queryRfea.isEmpty()) {
+            return pageranks;
+        }
+
+        // q_denor = sqrt(sum(s*s for t,s in query_rfea if t != PAGERANK_FLD))
+        double qDenorSum = 0.0;
+        for (Map.Entry<String, Double> e : queryRfea.entrySet()) {
+            if (!PAGERANK_FLD.equals(e.getKey())) {
+                double s = e.getValue();
+                qDenorSum += s * s;
+            }
+        }
+        double qDenor = Math.sqrt(qDenorSum);
+        // q_denor == 0 -> 返回 pageranks（对应 if q_denor == 0: return 0 + pageranks）
+        if (qDenor == 0.0) {
+            return pageranks;
+        }
+
+        double[] rankFea = new double[n];
+        for (int i = 0; i < n; i++) {
+            Map<String, Object> chunk = fields.get(ids.get(i));
+            Object tagRaw = chunk == null ? null : chunk.get(TAG_FLD);
+            if (tagRaw == null) {
+                rankFea[i] = 0.0;
+                continue;
+            }
+            Map<String, Double> tagFeas = parseTagFeatures(tagRaw);
+            if (tagFeas.isEmpty()) {
+                rankFea[i] = 0.0;
+                continue;
+            }
+            double nor = 0.0;
+            double denor = 0.0;
+            for (Map.Entry<String, Double> e : tagFeas.entrySet()) {
+                String t = e.getKey();
+                double sc = e.getValue();
+                if (queryRfea.containsKey(t)) {
+                    nor += queryRfea.get(t) * sc;
+                }
+                denor += sc * sc;
+            }
+            rankFea[i] = denor == 0.0 ? 0.0 : nor / Math.sqrt(denor) / qDenor;
+        }
+
+        // 对应 return np.array(rank_fea) * 10.0 + pageranks
+        double[] out = new double[n];
+        for (int i = 0; i < n; i++) {
+            out[i] = rankFea[i] * 10.0 + pageranks[i];
+        }
+        return out;
+    }
+
+    /**
+     * 将 retrieval 入参 rankFeature（Object）转为 {@code Map<String, Double>}（对应 Python query_rfea 字典）。
+     * <p>只保留 key 为非空字符串、value 为有限数值的项；null 或非 Map 视为空。</p>
+     */
+    private Map<String, Double> asRankFeature(Object rankFeature) {
+        Map<String, Double> out = new LinkedHashMap<>();
+        if (!(rankFeature instanceof Map<?, ?> map)) {
+            return out;
+        }
+        for (Map.Entry<?, ?> e : map.entrySet()) {
+            Object k = e.getKey();
+            Object v = e.getValue();
+            if (!(k instanceof String key)) {
+                continue;
+            }
+            key = key.trim();
+            if (key.isEmpty()) {
+                continue;
+            }
+            if (v instanceof Boolean) {
+                continue;
+            }
+            if (v instanceof Number num) {
+                double d = num.doubleValue();
+                if (Double.isFinite(d)) {
+                    out.put(key, d);
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 解析 chunk 的 tag_feas（百分百还原 RagFlow {@code parse_tag_features}，
+     * 参数 allow_json_string=True, allow_python_literal=True）。
+     *
+     * <p>支持传入 Map，或 JSON 字符串（如 {@code {"a":1.0,"b":2}}）。忽略布尔值、非有限数值、空 key。</p>
+     */
+    private Map<String, Double> parseTagFeatures(Object raw) {
+        Map<String, Double> cleaned = new LinkedHashMap<>();
+        if (raw == null) {
+            return cleaned;
+        }
+        Map<?, ?> parsed = null;
+        if (raw instanceof Map<?, ?> m) {
+            parsed = m;
+        } else if (raw instanceof String s) {
+            String str = s.trim();
+            if (str.isEmpty()) {
+                return cleaned;
+            }
+            parsed = tryParseJsonMap(str);
+            if (parsed == null) {
+                parsed = tryParsePythonLiteralMap(str);
+            }
+            if (parsed == null) {
+                return cleaned;
+            }
+        } else {
+            return cleaned;
+        }
+
+        for (Map.Entry<?, ?> e : parsed.entrySet()) {
+            Object k = e.getKey();
+            Object v = e.getValue();
+            if (!(k instanceof String key)) {
+                continue;
+            }
+            key = key.trim();
+            if (key.isEmpty()) {
+                continue;
+            }
+            if (v instanceof Boolean) {
+                continue;
+            }
+            if (v instanceof Number num) {
+                double d = num.doubleValue();
+                if (Double.isFinite(d)) {
+                    cleaned.put(key, d);
+                }
+            }
+        }
+        return cleaned;
+    }
+
+    /**
+     * 尝试将字符串解析为 JSON 对象 Map（对应 parse_tag_features 中 json.loads 分支）。
+     * 解析失败或结果非对象返回 null。
+     */
+    private Map<?, ?> tryParseJsonMap(String str) {
+        try {
+            Object obj = JSON_MAPPER.readValue(str, Object.class);
+            return obj instanceof Map<?, ?> m ? m : null;
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    /**
+     * 尝试将 Python 字面量 dict 字符串（单引号）解析为 Map（对应 ast.literal_eval 分支）。
+     * <p>简化处理：将单引号替换为双引号后按 JSON 解析，覆盖常见 {@code {'a': 1.0}} 形态。</p>
+     */
+    private Map<?, ?> tryParsePythonLiteralMap(String str) {
+        try {
+            String jsonLike = str.replace('\'', '"');
+            Object obj = JSON_MAPPER.readValue(jsonLike, Object.class);
+            return obj instanceof Map<?, ?> m ? m : null;
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    /**
+     * 安全转 double（对应 Python field.get(PAGERANK_FLD, 0) 的数值语义），非数值/解析失败返回默认值。
+     */
+    private double toDouble(Object v, double def) {
+        if (v == null) {
+            return def;
+        }
+        if (v instanceof Number num) {
+            return num.doubleValue();
+        }
+        try {
+            return Double.parseDouble(String.valueOf(v).trim());
+        } catch (Exception ex) {
+            return def;
         }
     }
 }

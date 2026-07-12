@@ -65,3 +65,334 @@ export function logout(): Promise<void> {
 export function getCurrentUser(): Promise<string> {
   return request<string>('/api/auth/current', { method: 'GET' })
 }
+
+// ==================== 知识库 / 文档 ====================
+
+/** 知识库 */
+export interface KnowledgeBase {
+  id: string
+  name: string
+  description: string | null
+  userId: string
+  permission: string
+  chunkMethod: string
+  docNum: number
+  tokenNum: number
+  chunkNum: number
+  createdTime: string
+  modifiedTime: string
+}
+
+/** 知识库列表返回 */
+export interface KbListResp {
+  data: KnowledgeBase[]
+  total: number
+}
+
+/** 文档列表项 */
+export interface DocItem {
+  id: string
+  name: string
+  kbId: string
+  chunkMethod: string
+  type: string | null
+  suffix: string | null
+  size: number | null
+  chunkCount: number | null
+  tokenCount: number | null
+  run: number | null
+  /** 解析进度 0~1，-1 表示失败 */
+  progress: number | null
+  /** 解析进度描述信息（累积各阶段日志） */
+  progressMsg: string | null
+  status: string | null
+  errorMsg: string | null
+  createdTime: string
+  modifiedTime: string
+}
+
+/** 文档列表返回 */
+export interface DocListResp {
+  total: number
+  docs: DocItem[]
+}
+
+/** 文档过滤聚合返回，对应 GET /datasets/{id}/documents?type=filter */
+export interface DocFilterResp {
+  total: number
+  filter: {
+    suffix: Record<string, number>
+    runStatus: Record<string, number>
+    metadata: Record<string, Record<string, number>>
+  }
+}
+
+/** 创建知识库入参 */
+export interface CreateKbReq {
+  name: string
+  description?: string
+  permission?: string
+  chunkMethod?: string
+}
+
+/** 创建知识库，对应 POST /api/v1/datasets */
+export function createDataset(req: CreateKbReq): Promise<KnowledgeBase> {
+  return request<KnowledgeBase>('/api/v1/datasets', {
+    method: 'POST',
+    body: JSON.stringify(req)
+  })
+}
+
+/** 知识库列表，对应 GET /api/v1/datasets */
+export function listDatasets(page = 1, pageSize = 30, keywords = ''): Promise<KbListResp> {
+  const params = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize)
+  })
+  if (keywords) {
+    params.set('keywords', keywords)
+  }
+  return request<KbListResp>(`/api/v1/datasets?${params.toString()}`, { method: 'GET' })
+}
+
+/** 知识库详情，对应 GET /api/v1/datasets/{id} */
+export function getDataset(id: string): Promise<KnowledgeBase> {
+  return request<KnowledgeBase>(`/api/v1/datasets/${id}`, { method: 'GET' })
+}
+
+/** 删除知识库，对应 DELETE /api/v1/datasets */
+export function deleteDatasets(ids: string[]): Promise<number> {
+  return request<number>('/api/v1/datasets', {
+    method: 'DELETE',
+    body: JSON.stringify({ ids, deleteAll: false })
+  })
+}
+
+/** 知识库文档列表，对应 GET /api/v1/datasets/{id}/documents */
+export function listDocuments(
+  datasetId: string,
+  page = 1,
+  pageSize = 50,
+  keywords = ''
+): Promise<DocListResp> {
+  const params = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize)
+  })
+  if (keywords) {
+    params.set('keywords', keywords)
+  }
+  return request<DocListResp>(
+    `/api/v1/datasets/${datasetId}/documents?${params.toString()}`,
+    { method: 'GET' }
+  )
+}
+
+/** 文档过滤聚合，对应 GET /api/v1/datasets/{id}/documents?type=filter */
+export function getDocFilters(datasetId: string, keywords = ''): Promise<DocFilterResp> {
+  const params = new URLSearchParams({ type: 'filter' })
+  if (keywords) {
+    params.set('keywords', keywords)
+  }
+  return request<DocFilterResp>(
+    `/api/v1/datasets/${datasetId}/documents?${params.toString()}`,
+    { method: 'GET' }
+  )
+}
+
+/** 上传文档到知识库，对应 POST /api/v1/documents/upload（multipart） */
+export function uploadDocuments(datasetId: string, files: File[]): Promise<DocItem[]> {
+  const form = new FormData()
+  form.append('kbId', datasetId)
+  files.forEach((f) => form.append('file', f))
+
+  // 注意：FormData 不能手动设置 Content-Type，交给浏览器自动带 boundary
+  const headers: Record<string, string> = {}
+  const token = tokenStore.get()
+  if (token) {
+    headers['Authorization'] = 'Bearer ' + token
+  }
+  return fetch(BASE_URL + '/api/v1/documents/upload', {
+    method: 'POST',
+    headers,
+    body: form
+  }).then(async (res) => {
+    if (res.status === 401) {
+      tokenStore.clear()
+      throw new Error('登录已失效，请重新登录')
+    }
+    const body: Result<DocItem[]> = await res.json()
+    if (body.code !== '200') {
+      throw new Error(body.msg || '上传失败')
+    }
+    return body.data
+  })
+}
+
+// ==================== 聊天助手 / 会话 ====================
+
+/** 聊天助手（Chat） */
+export interface Chat {
+  id: string
+  name: string
+  description: string | null
+  userId: string
+  llmId: string
+  llmSetting: Record<string, unknown>
+  promptConfig: Record<string, unknown>
+  datasetIds: string[]
+  kbNames: string[]
+  rerankId: string
+  topN: number
+  topK: number
+  similarityThreshold: number
+  vectorSimilarityWeight: number
+  createdTime: string
+  modifiedTime: string
+}
+
+/** 助手列表返回 */
+export interface ChatListResp {
+  chats: Chat[]
+  total: number
+}
+
+/** 会话消息 */
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  id?: string
+  [key: string]: unknown
+}
+
+/** 会话（Session） */
+export interface Session {
+  id: string
+  chatId: string
+  userId: string
+  name: string
+  messages: ChatMessage[]
+  reference: unknown[]
+  createdTime: string
+  modifiedTime: string
+}
+
+/** 创建 / 更新助手入参 */
+export interface ChatSaveReq {
+  name: string
+  description?: string
+  datasetIds?: string[]
+  llmId?: string
+}
+
+/** 创建助手，对应 POST /api/v1/chats */
+export function createChat(req: ChatSaveReq): Promise<Chat> {
+  return request<Chat>('/api/v1/chats', {
+    method: 'POST',
+    body: JSON.stringify(req)
+  })
+}
+
+/** 助手列表，对应 GET /api/v1/chats */
+export function listChats(page = 1, pageSize = 50, keywords = ''): Promise<ChatListResp> {
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
+  if (keywords) {
+    params.set('keywords', keywords)
+  }
+  return request<ChatListResp>(`/api/v1/chats?${params.toString()}`, { method: 'GET' })
+}
+
+/** 更新助手，对应 PUT /api/v1/chats/{id} */
+export function updateChat(id: string, req: ChatSaveReq): Promise<Chat> {
+  return request<Chat>(`/api/v1/chats/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(req)
+  })
+}
+
+/** 删除助手，对应 DELETE /api/v1/chats */
+export function deleteChats(ids: string[]): Promise<number> {
+  return request<number>('/api/v1/chats', {
+    method: 'DELETE',
+    body: JSON.stringify({ ids, deleteAll: false })
+  })
+}
+
+/** 创建会话，对应 POST /api/v1/chats/{id}/sessions */
+export function createSession(chatId: string, name = 'New session'): Promise<Session> {
+  return request<Session>(`/api/v1/chats/${chatId}/sessions`, {
+    method: 'POST',
+    body: JSON.stringify({ name })
+  })
+}
+
+/** 会话列表，对应 GET /api/v1/chats/{id}/sessions */
+export function listSessions(chatId: string, page = 1, pageSize = 50): Promise<Session[]> {
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
+  return request<Session[]>(`/api/v1/chats/${chatId}/sessions?${params.toString()}`, {
+    method: 'GET'
+  })
+}
+
+/** 会话详情，对应 GET /api/v1/chats/{id}/sessions/{sid} */
+export function getSession(chatId: string, sessionId: string): Promise<Session> {
+  return request<Session>(`/api/v1/chats/${chatId}/sessions/${sessionId}`, { method: 'GET' })
+}
+
+/** 重命名会话，对应 PATCH /api/v1/chats/{id}/sessions/{sid} */
+export function renameSession(chatId: string, sessionId: string, name: string): Promise<Session> {
+  return request<Session>(`/api/v1/chats/${chatId}/sessions/${sessionId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name })
+  })
+}
+
+/** 删除会话，对应 DELETE /api/v1/chats/{id}/sessions */
+export function deleteSessions(chatId: string, ids: string[]): Promise<number> {
+  return request<number>(`/api/v1/chats/${chatId}/sessions`, {
+    method: 'DELETE',
+    body: JSON.stringify({ ids, deleteAll: false })
+  })
+}
+
+/** 聊天补全答案 */
+export interface ChatAnswer {
+  answer: string
+  reference: Record<string, unknown> | null
+  id: string | null
+  convId: string | null
+  dialogId: string | null
+}
+
+/** 聊天补全（非流式），对应 POST /api/v1/chat/completions */
+export function chatCompletion(
+  dialogId: string,
+  convId: string,
+  question: string
+): Promise<ChatAnswer> {
+  return request<ChatAnswer>('/api/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      dialogId,
+      convId,
+      messages: [{ role: 'user', content: question }]
+    })
+  })
+}
+
+/** 触发文档解析 / 运行状态变更，对应 POST /api/v1/documents/ingest */
+export function ingestDocuments(
+  docIds: string[],
+  run: number,
+  opts: { delete?: boolean; applyKb?: boolean } = {}
+): Promise<boolean> {
+  return request<boolean>('/api/v1/documents/ingest', {
+    method: 'POST',
+    body: JSON.stringify({
+      docIds,
+      run,
+      delete: opts.delete ?? false,
+      applyKb: opts.applyKb ?? false
+    })
+  })
+}

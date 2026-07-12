@@ -36,6 +36,11 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class ElasticsearchServiceImpl implements ElasticsearchService {
 
+    /**
+     * 检索重试次数，对应 Python es_conn.py 的 {@code ATTEMPT_TIME = 2}。
+     */
+    private static final int ATTEMPT_TIME = 2;
+
     private final ElasticsearchClient client;
 
     // ==================== 索引操作 ====================
@@ -263,68 +268,95 @@ public class ElasticsearchServiceImpl implements ElasticsearchService {
         if (req == null || CollectionUtils.isEmpty(req.getIndexNames())) {
             return result;
         }
-        try {
-            // 组装 filter（kb_id / doc_id / available_int）
-            List<Query> filters = buildFilters(req.getKbIds(), req.getDocIds(), req.getAvailableInt());
 
-            // 组装全文 should（query_string），对应 MatchTextExpr
-            List<Query> should = new ArrayList<>();
-            if (StringUtils.isNotBlank(req.getQueryString())) {
-                should.add(Query.of(q -> q.queryString(qs -> {
-                    qs.query(req.getQueryString());
-                    if (!CollectionUtils.isEmpty(req.getQueryFields())) {
-                        qs.fields(req.getQueryFields());
-                    }
-                    if (req.getMinimumShouldMatch() != null) {
-                        qs.minimumShouldMatch(String.valueOf(req.getMinimumShouldMatch()));
-                    }
-                    return qs;
-                })));
+        // 对齐 Python ESConnection.search：weighted_sum 融合权重（默认 0.5，
+        // 有 weights 时取向量权重），bool_query.boost = 1.0 - vector_similarity_weight。
+        double vectorSimilarityWeight = req.getVectorWeight();
+
+        // 组装 filter（kb_id / doc_id / available_int）
+        List<Query> filters = buildFilters(req.getKbIds(), req.getDocIds(), req.getAvailableInt());
+
+        // 全文 query_string 走 must（对应 Python bool_query.must.append），type=best_fields，boost=1
+        boolean hasText = StringUtils.isNotBlank(req.getQueryString());
+        List<Query> must = new ArrayList<>();
+        if (hasText) {
+            must.add(Query.of(q -> q.queryString(qs -> {
+                qs.query(req.getQueryString());
+                qs.type(co.elastic.clients.elasticsearch._types.query_dsl.TextQueryType.BestFields);
+                qs.boost(1.0f);
+                if (!CollectionUtils.isEmpty(req.getQueryFields())) {
+                    qs.fields(req.getQueryFields());
+                }
+                if (req.getMinimumShouldMatch() != null) {
+                    qs.minimumShouldMatch(String.valueOf(req.getMinimumShouldMatch()));
+                }
+                return qs;
+            })));
+        }
+
+        Query boolQuery = Query.of(q -> q.bool(b -> {
+            if (!filters.isEmpty()) {
+                b.filter(filters);
             }
-
-            Query boolQuery = Query.of(q -> q.bool(b -> {
-                if (!filters.isEmpty()) {
-                    b.filter(filters);
-                }
-                if (!should.isEmpty()) {
-                    b.should(should).minimumShouldMatch("1");
-                }
-                if (should.isEmpty() && filters.isEmpty()) {
-                    b.must(m -> m.matchAll(ma -> ma));
-                }
-                return b;
-            }));
+            if (!must.isEmpty()) {
+                b.must(must);
+                // 对应 Python：bool_query.boost = 1.0 - vector_similarity_weight
+                b.boost((float) (1.0 - vectorSimilarityWeight));
+            }
+            if (must.isEmpty() && filters.isEmpty()) {
+                b.must(m -> m.matchAll(ma -> ma));
+            }
+            return b;
+        }));
 
         boolean hasVector = !CollectionUtils.isEmpty(req.getQueryVector());
-            List<Float> qv = req.getQueryVector();
+        List<Float> qv = req.getQueryVector();
+        int topn = req.getTopk();
 
-            SearchResponse<Map> response = client.search(s -> {
-                s.index(req.getIndexNames())
-                        .from(req.getOffset())
-                        .size(req.getLimit())
-                        .query(boolQuery)
-                        .trackTotalHits(t -> t.enabled(true));
-                if (!CollectionUtils.isEmpty(req.getSourceFields())) {
-                    s.source(src -> src.filter(f -> f.includes(req.getSourceFields())));
-                }
-                // 向量 KNN：与全文 bool 融合（ES 会将 knn 分与 query 分相加）
-                if (hasVector) {
-                    String vecField = "q_" + qv.size() + "_vec";
-                    s.knn(k -> k.field(vecField)
-                            .queryVector(qv)
-                            .k(req.getTopk())
-                            .numCandidates(Math.max(req.getTopk(), req.getLimit()))
-                            .boost((float) req.getVectorWeight())
-                            .similarity((float) req.getSimilarity()));
-                }
-                return s;
-            }, Map.class);
+        // 对应 Python for i in range(ATTEMPT_TIME) 的重试与超时检测
+        IOException lastIoEx = null;
+        for (int attempt = 0; attempt < ATTEMPT_TIME; attempt++) {
+            try {
+                SearchResponse<Map> response = client.search(s -> {
+                    s.index(req.getIndexNames())
+                            .from(req.getOffset())
+                            .size(req.getLimit())
+                            .query(boolQuery)
+                            .trackTotalHits(t -> t.enabled(true));
+                    if (!CollectionUtils.isEmpty(req.getSourceFields())) {
+                        s.source(src -> src.filter(f -> f.includes(req.getSourceFields())));
+                    }
+                    // 向量 KNN：对应 Python s.knn(topn, topn*2, filter=bool_query, similarity)，无 boost。
+                    if (hasVector) {
+                        String vecField = "q_" + qv.size() + "_vec";
+                        s.knn(k -> k.field(vecField)
+                                .queryVector(qv)
+                                .k(topn)
+                                .numCandidates(topn * 2)
+                                .filter(boolQuery)
+                                .similarity((float) req.getSimilarity()));
+                    }
+                    return s;
+                }, Map.class);
 
-            fillResult(result, response);
-        } catch (IOException ex) {
-            throw new RuntimeException("混合检索失败: index=" + req.getIndexNames(), ex);
+                // 对应 Python：if str(res.timed_out).lower() == "true": raise Exception("Es Timeout.")
+                if (Boolean.TRUE.equals(response.timedOut())) {
+                    throw new RuntimeException("Es Timeout.");
+                }
+
+                fillResult(result, response);
+                return result;
+            } catch (IOException ex) {
+                // 对应 Python ConnectionTimeout 分支：记录并重试
+                lastIoEx = ex;
+                log.warn("ElasticsearchServiceImpl.hybridSearch IO 异常，第 {} 次重试, index={}",
+                        attempt + 1, req.getIndexNames(), ex);
+            }
         }
-        return result;
+
+        log.error("ElasticsearchServiceImpl.hybridSearch timeout for {} times! index={}",
+                ATTEMPT_TIME, req.getIndexNames());
+        throw new RuntimeException("混合检索失败: index=" + req.getIndexNames(), lastIoEx);
     }
 
     @Override
@@ -394,7 +426,14 @@ public class ElasticsearchServiceImpl implements ElasticsearchService {
             filters.add(Query.of(q -> q.terms(t -> t.field("doc_id").terms(tv -> tv.value(values)))));
         }
         if (availableInt != null) {
-            filters.add(Query.of(q -> q.term(t -> t.field("available_int").value(availableInt))));
+            // 对齐 Python ESConnection.search：available_int 走 range 逻辑而非 term。
+            // v == 0 -> range(available_int < 1)；否则 -> must_not(range(available_int < 1))。
+            if (availableInt == 0) {
+                filters.add(Query.of(q -> q.range(r -> r.number(n -> n.field("available_int").lt(1.0)))));
+            } else {
+                Query lt1 = Query.of(q -> q.range(r -> r.number(n -> n.field("available_int").lt(1.0))));
+                filters.add(Query.of(q -> q.bool(b -> b.mustNot(lt1))));
+            }
         }
         return filters;
     }

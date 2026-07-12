@@ -51,6 +51,12 @@ onMounted(loadUser)
           当前登录用户：<span class="uid">{{ currentUser || '...' }}</span>
         </p>
         <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
+        <button class="enter-btn" @click="router.push({ name: 'knowledge-base' })">
+          进入知识库
+        </button>
+        <button class="enter-btn" style="margin-left: 12px" @click="router.push({ name: 'chat' })">
+          智能问答
+        </button>
         <p class="desc">
           该用户信息通过后端 UserContext 工具类获取，
           业务代码中可随时调用 <code>UserContext.getUserId()</code>。
@@ -190,5 +196,20 @@ onMounted(loadUser)
   margin-top: 12px;
   color: #ff6b81;
   font-size: 13px;
+}
+.enter-btn {
+  margin-top: 22px;
+  padding: 11px 28px;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  color: #fff;
+  font-weight: 600;
+  background: linear-gradient(135deg, #3b6bff, #00d4ff);
+  box-shadow: 0 8px 24px rgba(59, 107, 255, 0.35);
+  transition: transform 0.2s;
+}
+.enter-btn:hover {
+  transform: translateY(-2px);
 }
 </style>

@@ -78,6 +78,18 @@ public class KbDocumentPO extends BasePO {
     private Integer tokenCount;
 
     /**
+     * 解析进度，取值 0~1（对应 RagFlow document.progress）。
+     * <p>由 dream-processor 在解析过程中回写，前端轮询该字段展示进度条。</p>
+     */
+    private java.math.BigDecimal progress;
+
+    /**
+     * 解析进度描述信息（对应 RagFlow document.progress_msg）。
+     * <p>累积展示各阶段的进度日志，前端可用于 tooltip 或详情展示。</p>
+     */
+    private String progressMsg;
+
+    /**
      * 文档级元数据（JSON 字符串，对应 RagFlow document.meta_fields）。
      * 由 enable_metadata 增强抽取的各分块 metadata 合并去重后落库。
      */
