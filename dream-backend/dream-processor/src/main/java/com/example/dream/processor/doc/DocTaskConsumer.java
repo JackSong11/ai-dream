@@ -44,7 +44,13 @@ public class DocTaskConsumer implements StreamListener<String, @NonNull MapRecor
 
         DocTaskMessage message;
         try {
-            message = objectMapper.readValue(payload, DocTaskMessage.class);
+            // Redis Stream 中的 payload 可能被双层序列化（外层多了一对引号与转义），
+            // 需要先解包再反序列化为对象
+            String jsonPayload = payload;
+            if (payload.startsWith("\"") && payload.endsWith("\"")) {
+                jsonPayload = objectMapper.readValue(payload, String.class);
+            }
+            message = objectMapper.readValue(jsonPayload, DocTaskMessage.class);
         } catch (Exception e) {
             log.error("消息反序列化失败, recordId={}, payload={}", recordId, payload, e);
             // 无法解析的消息 ack 掉，避免无限重投

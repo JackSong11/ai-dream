@@ -82,6 +82,20 @@ public class ElasticsearchServiceImpl implements ElasticsearchService {
             String vectorField = "q_" + vectorSize + "_vec";
             String mappingJson = """
                     {
+                      "settings": {
+                        "index": {
+                          "number_of_shards": 2,
+                          "number_of_replicas": 0,
+                          "similarity": {
+                            "scripted_sim": {
+                              "type": "scripted",
+                              "script": {
+                                "source": "double idf = Math.log(1+(field.docCount-term.docFreq+0.5)/(term.docFreq + 0.5))/Math.log(1+((field.docCount-0.5)/1.5)); return query.boost * idf * Math.min(doc.freq, 1);"
+                              }
+                            }
+                          }
+                        }
+                      },
                       "mappings": {
                         "dynamic_templates": [
                           { "int":   { "match": "*_int",   "mapping": { "store": "true", "type": "integer" } } },
