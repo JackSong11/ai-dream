@@ -73,6 +73,9 @@ public class ElasticsearchDocStore implements DocStoreConnection {
             esReq.setMinimumShouldMatch(matchText.getMinimumShouldMatch());
         }
 
+        // 传递 rankFeature（对应 Python es_conn.py 中 rank_feature 参数）
+        esReq.setRankFeature(req.getRankFeature());
+
         HybridSearchResult result = elasticsearchService.hybridSearch(esReq);
         normalizeLongFields(result);
         return result;

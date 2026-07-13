@@ -33,6 +33,7 @@ public final class TermWeight {
     private static final Pattern LETTER = Pattern.compile("[a-z. -]+$");
     private static final Pattern DIGIT_TAG = Pattern.compile("[0-9-]+.*");
     private static final Pattern TAB_SPACE = Pattern.compile("[ \\t]+");
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
     private static final Pattern EN_TAIL = Pattern.compile(".*[a-zA-Z]$");
     private static final Pattern ONE_TERM = Pattern.compile("[0-9a-z]{1,2}$");
     private static final Pattern DIGIT_END = Pattern.compile("[0-9]$");
@@ -87,7 +88,7 @@ public final class TermWeight {
     /** 预分词（对应 pretoken）。 */
     List<String> pretoken(String txt, boolean num, boolean stpwd) {
         List<String> res = new ArrayList<>();
-        for (String t : tokenizer.tokenize(txt).split("\\s+")) {
+        for (String t : WHITESPACE.split(tokenizer.tokenize(txt))) {
             if (t.isEmpty()) {
                 continue;
             }
@@ -215,59 +216,81 @@ public final class TermWeight {
     }
 
     private double freqScore(String t) {
-        if (NUM_SPACE.matcher(t).matches()) {
-            return 3;
+        return freqScore(t, 0, new HashSet<>());
+    }
+
+    private double freqScore(String t, int depth, Set<String> visited) {
+        if (depth > 3 || !visited.add(t)) {
+            return 10;
         }
-        double s = tokenizer.freq(t);
-        if (s == 0 && LETTER.matcher(t).matches()) {
-            return 300;
-        }
-        if (s == 0 && t.length() >= 4) {
-            List<Double> sub = new ArrayList<>();
-            for (String tt : tokenizer.fineGrainedTokenize(t).split("\\s+")) {
-                if (tt.length() > 1) {
-                    sub.add(freqScore(tt));
+        try {
+            if (NUM_SPACE.matcher(t).matches()) {
+                return 3;
+            }
+            double s = tokenizer.freq(t);
+            if (s == 0 && LETTER.matcher(t).matches()) {
+                return 300;
+            }
+            if (s == 0 && t.length() >= 4) {
+                List<Double> sub = new ArrayList<>();
+                for (String tt : WHITESPACE.split(tokenizer.fineGrainedTokenize(t))) {
+                    if (tt.length() > 1) {
+                        sub.add(freqScore(tt, depth + 1, visited));
+                    }
+                }
+                if (sub.size() > 1) {
+                    double min = Double.MAX_VALUE;
+                    for (double v : sub) {
+                        min = Math.min(min, v);
+                    }
+                    s = min / 6.0;
+                } else {
+                    s = 0;
                 }
             }
-            if (sub.size() > 1) {
-                double min = Double.MAX_VALUE;
-                for (double v : sub) {
-                    min = Math.min(min, v);
-                }
-                s = min / 6.0;
-            } else {
-                s = 0;
-            }
+            return Math.max(s, 10);
+        } finally {
+            visited.remove(t);
         }
-        return Math.max(s, 10);
     }
 
     private double dfScore(String t) {
-        if (NUM_SPACE.matcher(t).matches()) {
-            return 5;
+        return dfScore(t, 0, new HashSet<>());
+    }
+
+    private double dfScore(String t, int depth, Set<String> visited) {
+        if (depth > 3 || !visited.add(t)) {
+            return 3;
         }
-        if (df.containsKey(t)) {
-            return df.get(t) + 3;
-        }
-        if (LETTER.matcher(t).matches()) {
-            return 300;
-        }
-        if (t.length() >= 4) {
-            List<Double> sub = new ArrayList<>();
-            for (String tt : tokenizer.fineGrainedTokenize(t).split("\\s+")) {
-                if (tt.length() > 1) {
-                    sub.add(dfScore(tt));
+        try {
+            if (NUM_SPACE.matcher(t).matches()) {
+                return 5;
+            }
+            if (df.containsKey(t)) {
+                return df.get(t) + 3;
+            }
+            if (LETTER.matcher(t).matches()) {
+                return 300;
+            }
+            if (t.length() >= 4) {
+                List<Double> sub = new ArrayList<>();
+                for (String tt : WHITESPACE.split(tokenizer.fineGrainedTokenize(t))) {
+                    if (tt.length() > 1) {
+                        sub.add(dfScore(tt, depth + 1, visited));
+                    }
+                }
+                if (sub.size() > 1) {
+                    double min = Double.MAX_VALUE;
+                    for (double v : sub) {
+                        min = Math.min(min, v);
+                    }
+                    return Math.max(3, min / 6.0);
                 }
             }
-            if (sub.size() > 1) {
-                double min = Double.MAX_VALUE;
-                for (double v : sub) {
-                    min = Math.min(min, v);
-                }
-                return Math.max(3, min / 6.0);
-            }
+            return 3;
+        } finally {
+            visited.remove(t);
         }
-        return 3;
     }
 
     private double idf(double s, double n) {

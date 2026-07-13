@@ -23,6 +23,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * 检索编排层（对应 RagFlow rag/nlp/search.py 中的 {@code Dealer}）。
@@ -43,6 +44,8 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class Dealer implements Retriever {
+
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     /**
      * pagerank 特征字段名（对应 RagFlow common.constants.PAGERANK_FLD = "pagerank_fea"）。
@@ -110,7 +113,7 @@ public class Dealer implements Retriever {
         //    / question / topk=top / similarity=similarity_threshold / available_int=1
         int reqPage = globalOffset / rerankLimit + 1;
         HybridSearchResult sres = search(question, embedModel, idxNames, kbIds, docIds,
-                reqPage, rerankLimit, top, similarityThreshold);
+                reqPage, rerankLimit, top, similarityThreshold, rankFeature);
 
         // 剔除已删除文档的残留 chunk（对应 RagFlow Dealer._prune_deleted_chunks，在 rerank 前执行）。
         pruneDeletedChunks(sres);
@@ -268,7 +271,8 @@ public class Dealer implements Retriever {
                                       int page,
                                       int size,
                                       int topk,
-                                      double similarity) {
+                                      double similarity,
+                                      Object rankFeature) {
         // 分页参数（对应 pg = page-1; offset = pg*ps; limit = ps）
         int pg = Math.max(page, 1) - 1;
         int offset = pg * size;
@@ -292,6 +296,7 @@ public class Dealer implements Retriever {
         req.setSimilarity(similarity);
         req.setOffset(offset);
         req.setLimit(size);
+        req.setRankFeature(rankFeature != null ? toRankFeatureMap(rankFeature) : null);
 
         HybridSearchResult res;
         List<Float> qVec = new ArrayList<>();
@@ -335,7 +340,7 @@ public class Dealer implements Retriever {
             if (fg == null || fg.trim().isEmpty()) {
                 continue;
             }
-            for (String kk : fg.trim().split("\\s+")) {
+            for (String kk : WHITESPACE.split(fg.trim())) {
                 if (kk.length() < 2 || kwds.contains(kk)) {
                     continue;
                 }
@@ -488,7 +493,30 @@ public class Dealer implements Retriever {
         c.setSimilarity(src.getSimilarity());
         c.setOffset(src.getOffset());
         c.setLimit(src.getLimit());
+        c.setRankFeature(src.getRankFeature());
         return c;
+    }
+
+    /**
+     * 将 retrieval 入参 rankFeature（Object）转为 {@code Map<String, Double>}，
+     * 供底层 ES 查询构建 rank_feature should 子句（对应 Python es_conn.py:224-228）。
+     */
+    private Map<String, Double> toRankFeatureMap(Object rankFeature) {
+        if (!(rankFeature instanceof Map<?, ?> map)) {
+            return null;
+        }
+        Map<String, Double> result = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> e : map.entrySet()) {
+            Object k = e.getKey();
+            Object v = e.getValue();
+            if (!(k instanceof String key) || key.trim().isEmpty()) {
+                continue;
+            }
+            if (v instanceof Number num && Double.isFinite(num.doubleValue())) {
+                result.put(key, num.doubleValue());
+            }
+        }
+        return result.isEmpty() ? null : result;
     }
 
     /**

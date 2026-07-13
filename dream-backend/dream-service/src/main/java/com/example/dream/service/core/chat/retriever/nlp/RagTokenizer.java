@@ -32,12 +32,16 @@ public final class RagTokenizer {
     private static final Pattern SPLIT_CHAR = Pattern.compile(
             "([ ,\\.<>/?;:'\\[\\]\\\\`!@#$%^&*\\(\\)\\{\\}\\|_+=《》，。？、；‘’：“”【】~！￥%……（）——-]+|[a-zA-Z0-9,\\.-]+)");
 
-    private static final Pattern NON_WORD = Pattern.compile("\\W+");
+    // Python 3 的 \W 是 Unicode-aware，中文字符属于 \w（单词字符），所以 re.sub(r"\W+", " ", line) 不会替换中文。
+    // Java 的 \W 默认只匹配 ASCII 单词字符（[a-zA-Z_0-9]），中文字符被当作 \W 匹配，导致 NON_WORD.matcher(line).replaceAll(" ") 把所有中文替换成空格 → 分词结果没有中文。
+    // 修复： 给NON_WORD Pattern 添加 Pattern.UNICODE_CHARACTER_CLASS 标志：
+    private static final Pattern NON_WORD = Pattern.compile("\\W+", Pattern.UNICODE_CHARACTER_CLASS);
     private static final Pattern EN_OR_NUM = Pattern.compile("[a-z\\.-]+$");
     private static final Pattern NUM_ONLY = Pattern.compile("[0-9\\.-]+$");
     private static final Pattern NUM_COMMA_DOT = Pattern.compile("[0-9,\\.-]+$");
     private static final Pattern MULTI_SPACE = Pattern.compile("[ ]+");
     private static final Pattern EN_TAIL = Pattern.compile(".*[a-zA-Z]$");
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     private final HuqieTrie trie = new HuqieTrie();
 
@@ -95,7 +99,7 @@ public final class RagTokenizer {
                 }
                 try {
                     double freq = Double.parseDouble(arr[1]);
-                    int f = (int) Math.floor(Math.log(freq / HuqieTrie.DENOMINATOR) + 0.5);
+                    int f = (int)(Math.log(freq / HuqieTrie.DENOMINATOR) + 0.5);
                     trie.put(arr[0], f, arr[2]);
                 } catch (NumberFormatException ignore) {
                     // 跳过非法行
@@ -153,7 +157,7 @@ public final class RagTokenizer {
         if (e == null) {
             return 0;
         }
-        return (int) Math.floor(Math.exp(e.f) * HuqieTrie.DENOMINATOR + 0.5);
+        return (int)(Math.exp(e.f) * HuqieTrie.DENOMINATOR + 0.5);
     }
 
     /** 词性（对应 tag）。 */
@@ -399,8 +403,6 @@ public final class RagTokenizer {
     /** 按语言（中/非中）切段（对应 _split_by_lang）。 */
     private List<String[]> splitByLang(String line) {
         List<String[]> pairs = new ArrayList<>();
-        String[] arr = SPLIT_CHAR.split(line, -1);
-        // Python re.split(捕获组) 会把分隔符也放进结果，这里补回分隔符片段
         List<String> segments = splitKeepDelimiters(line);
         for (String a : segments) {
             if (a == null || a.isEmpty()) {
@@ -449,7 +451,7 @@ public final class RagTokenizer {
     /** 英文分词近似（对应 nltk.word_tokenize：按空白切分，尾部标点拆出）。 */
     private List<String> wordTokenize(String l) {
         List<String> res = new ArrayList<>();
-        for (String w : l.trim().split("\\s+")) {
+        for (String w : WHITESPACE.split(l.trim())) {
             if (w.isEmpty()) {
                 continue;
             }
@@ -476,9 +478,6 @@ public final class RagTokenizer {
 
     /** 主分词（对应 tokenize）。 */
     public String tokenize(String line) {
-        if (line == null) {
-            return "";
-        }
         line = NON_WORD.matcher(line).replaceAll(" ");
         line = strQ2B(line).toLowerCase();
         line = tradi2simp(line);
@@ -563,7 +562,7 @@ public final class RagTokenizer {
 
     /** 细粒度分词（对应 fine_grained_tokenize）。 */
     public String fineGrainedTokenize(String tksStr) {
-        String[] tks = tksStr.trim().isEmpty() ? new String[0] : tksStr.trim().split("\\s+");
+        String[] tks = tksStr.trim().isEmpty() ? new String[0] : WHITESPACE.split(tksStr.trim());
         int zhNum = 0;
         for (String c : tks) {
             if (!c.isEmpty() && isChinese(c.charAt(0))) {

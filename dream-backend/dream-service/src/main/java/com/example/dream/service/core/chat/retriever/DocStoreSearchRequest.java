@@ -5,6 +5,7 @@ import lombok.Data;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 一次混合检索的请求参数（对应 RagFlow {@code Dealer.search} 内组装、传给
@@ -72,4 +73,12 @@ public class DocStoreSearchRequest {
      * 分页大小（对应 limit = ps）。
      */
     private int limit = 1024;
+
+    /**
+     * rank_feature 打分字段（对应 Python es_conn.py 中 rank_feature 参数）。
+     *
+     * <p>key 为字段名，value 为 boost 权重。对应 RAGFlow {@code Dealer.search} 中的
+     * {@code rank_feature} 参数，传递到底层 {@code ESConnection.search}。</p>
+     */
+    private Map<String, Double> rankFeature;
 }

@@ -307,10 +307,26 @@ public class ElasticsearchServiceImpl implements ElasticsearchService {
                     qs.fields(req.getQueryFields());
                 }
                 if (req.getMinimumShouldMatch() != null) {
-                    qs.minimumShouldMatch(String.valueOf(req.getMinimumShouldMatch()));
+                    qs.minimumShouldMatch(formatMinimumShouldMatch(req.getMinimumShouldMatch()));
                 }
                 return qs;
             })));
+        }
+
+        // rank_feature should 子句（对应 Python es_conn.py:224-228）
+        List<Query> should = new ArrayList<>();
+        Map<String, Double> rankFeature = req.getRankFeature();
+        if (rankFeature != null && !rankFeature.isEmpty()) {
+            for (Map.Entry<String, Double> entry : rankFeature.entrySet()) {
+                String fldOrig = entry.getKey();
+                // 对应 Python：if fld != PAGERANK_FLD: fld = f"{TAG_FLD}.{fld}"
+                final String fld = "pagerank_fea".equals(fldOrig) ? fldOrig : "tag_feas." + fldOrig;
+                final float sc = entry.getValue().floatValue();
+                should.add(Query.of(q -> q.rankFeature(rf -> rf
+                        .field(fld)
+                        .linear(l -> l)
+                        .boost(sc))));
+            }
         }
 
         Query boolQuery = Query.of(q -> q.bool(b -> {
@@ -321,6 +337,9 @@ public class ElasticsearchServiceImpl implements ElasticsearchService {
                 b.must(must);
                 // 对应 Python：bool_query.boost = 1.0 - vector_similarity_weight
                 b.boost((float) (1.0 - vectorSimilarityWeight));
+            }
+            if (!should.isEmpty()) {
+                b.should(should);
             }
             if (must.isEmpty() && filters.isEmpty()) {
                 b.must(m -> m.matchAll(ma -> ma));
@@ -428,6 +447,31 @@ public class ElasticsearchServiceImpl implements ElasticsearchService {
             throw new RuntimeException("二次 KNN 打分失败: index=" + indexNames, ex);
         }
         return scores;
+    }
+
+    /**
+     * 将 minimum_should_match 转为 ES 合法格式（对齐 RAGFlow es_conn.py:204-206）。
+     *
+     * <p>RAGFlow 逻辑：若值为 float（如 0.3），转为百分比字符串 {@code "30%"}；
+     * 若为整型或字符串则原样返回。ES 不接受 {@code "0.3"} 这种既非整数也非百分比的格式，
+     * 会抛 {@code number_format_exception}。</p>
+     *
+     * @param value 原始值（可能是 Double/Float/Integer/Long/String）
+     * @return ES 合法的 minimum_should_match 字符串
+     */
+    private String formatMinimumShouldMatch(Object value) {
+        if (value instanceof Double d) {
+            // 对齐 Python：str(int(minimum_should_match * 100)) + "%"
+            return (int) (d * 100) + "%";
+        }
+        if (value instanceof Float f) {
+            return (int) (f * 100) + "%";
+        }
+        if (value instanceof Number n) {
+            return String.valueOf(n.intValue());
+        }
+        // 字符串或其他类型原样返回
+        return String.valueOf(value);
     }
 
     /**

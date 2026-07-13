@@ -1020,11 +1020,151 @@ public class AsyncChatServiceImpl implements AsyncChatService {
     }
 
     /**
-     * TODO 对应 kb_prompt：将检索结果格式化为知识文本列表。
+     * 将检索结果格式化为知识文本列表（百分百还原 RagFlow rag.prompts.generator.kb_prompt）。
+     *
+     * <p>对应 Python：def kb_prompt(kbinfos, max_tokens, hash_id=False)。调用点未传 hash_id，
+     * 等价 Python 默认 hash_id=False，此处提供两参重载委托三参实现。</p>
      */
     private List<String> kbPrompt(Map<String, Object> kbinfos, int maxTokens) {
-        // TODO 接入知识文本格式化
-        return new ArrayList<>();
+        // 对应 Python：hash_id 默认 False
+        return kbPrompt(kbinfos, maxTokens, false);
+    }
+
+    /**
+     * 将检索结果格式化为知识文本列表（百分百还原 RagFlow rag.prompts.generator.kb_prompt）。
+     *
+     * <p>对应 Python：def kb_prompt(kbinfos, max_tokens, hash_id=False)。流程：</p>
+     * <ol>
+     *   <li>取所有 chunk 的内容（content / content_with_weight）；</li>
+     *   <li>按 token 累加，当 max_tokens * 0.97 &lt; used_token_count 时截断并打印 warning，记录 chunks_num；</li>
+     *   <li>对前 chunks_num 个 chunk 逐个拼接：ID（序号或 hash_str2int）、Title、URL、document_metadata 各 kv、Content。</li>
+     * </ol>
+     */
+    @SuppressWarnings("unchecked")
+    private List<String> kbPrompt(Map<String, Object> kbinfos, int maxTokens, boolean hashId) {
+        // 对应 Python：knowledges = [get_value(ck, "content", "content_with_weight") for ck in kbinfos["chunks"]]
+        List<Map<String, Object>> chunks = chunksOf(kbinfos);
+        List<String> knowledges = new ArrayList<>();
+        for (Map<String, Object> ck : chunks) {
+            knowledges.add(strOfNullable(getValue(ck, "content", "content_with_weight")));
+        }
+
+        // 对应 Python：kwlg_len = len(knowledges)
+        int kwlgLen = knowledges.size();
+        // 对应 Python：used_token_count = 0; chunks_num = 0
+        int usedTokenCount = 0;
+        int chunksNum = 0;
+        // 对应 Python：for i, c in enumerate(knowledges):
+        for (int i = 0; i < knowledges.size(); i++) {
+            String c = knowledges.get(i);
+            // 对应 Python：if not c: continue
+            if (c == null || c.isEmpty()) {
+                continue;
+            }
+            // 对应 Python：used_token_count += num_tokens_from_string(c); chunks_num += 1
+            usedTokenCount += numTokensFromString(c);
+            chunksNum += 1;
+            // 对应 Python：if max_tokens * 0.97 < used_token_count:
+            if (maxTokens * 0.97 < usedTokenCount) {
+                // 对应 Python：knowledges = knowledges[:i]
+                knowledges = new ArrayList<>(knowledges.subList(0, i));
+                log.warn("Not all the retrieval into prompt: {}/{}", knowledges.size(), kwlgLen);
+                break;
+            }
+        }
+
+        // 对应 Python：knowledges = []（重新构造）
+        knowledges = new ArrayList<>();
+        // 对应 Python：for i, ck in enumerate(kbinfos["chunks"][:chunks_num]):
+        int upper = Math.min(chunksNum, chunks.size());
+        for (int i = 0; i < upper; i++) {
+            Map<String, Object> ck = chunks.get(i);
+            // 对应 Python：cnt = "\nID: {}".format(i if not hash_id else hash_str2int(get_value(ck, "id", "chunk_id"), 500))
+            StringBuilder cnt = new StringBuilder();
+            cnt.append("\nID: ").append(
+                    hashId ? hashStr2Int(strOfNullable(getValue(ck, "id", "chunk_id")), 500) : i);
+            // 对应 Python：cnt += draw_node("Title", get_value(ck, "docnm_kwd", "document_name"))
+            cnt.append(drawNode("Title", getValue(ck, "docnm_kwd", "document_name")));
+            // 对应 Python：cnt += draw_node("URL", ck.get("url", ""))
+            cnt.append(drawNode("URL", ck.getOrDefault("url", "")));
+            // 对应 Python：meta = ck.get("document_metadata") or {}
+            Object metaObj = ck.get("document_metadata");
+            if (metaObj instanceof Map) {
+                Map<Object, Object> meta = (Map<Object, Object>) metaObj;
+                // 对应 Python：for k, v in meta.items(): cnt += draw_node(k, v)
+                for (Map.Entry<Object, Object> e : meta.entrySet()) {
+                    cnt.append(drawNode(strOfNullable(e.getKey()), e.getValue()));
+                }
+            }
+            // 对应 Python：cnt += "\n└── Content:\n"
+            cnt.append("\n└── Content:\n");
+            // 对应 Python：cnt += get_value(ck, "content", "content_with_weight")
+            String content = strOfNullable(getValue(ck, "content", "content_with_weight"));
+            cnt.append(content == null ? "" : content);
+            // 对应 Python：knowledges.append(cnt)
+            knowledges.add(cnt.toString());
+        }
+
+        return knowledges;
+    }
+
+    /**
+     * 对应 Python：def get_value(d, k1, k2): return d.get(k1, d.get(k2))。
+     * 优先取 k1，缺失则取 k2。
+     */
+    private Object getValue(Map<String, Object> d, String k1, String k2) {
+        if (d == null) {
+            return null;
+        }
+        return d.containsKey(k1) ? d.get(k1) : d.get(k2);
+    }
+
+    /**
+     * 对应 Python kb_prompt 内嵌的 draw_node(k, line)。
+     *
+     * <p>line 非字符串则转字符串；空则返回空串；否则返回 {@code "\n├── {k}: "} 拼接
+     * 将连续换行替换为单空格后的内容（对应 re.sub(r"\n+", " ", line, flags=re.DOTALL)）。</p>
+     */
+    private String drawNode(String k, Object line) {
+        // 对应 Python：if line is not None and not isinstance(line, str): line = str(line)
+        String lineStr;
+        if (line == null) {
+            lineStr = null;
+        } else if (line instanceof String s) {
+            lineStr = s;
+        } else {
+            lineStr = String.valueOf(line);
+        }
+        // 对应 Python：if not line: return ""
+        if (lineStr == null || lineStr.isEmpty()) {
+            return "";
+        }
+        // 对应 Python：return f"\n├── {k}: " + re.sub(r"\n+", " ", line, flags=re.DOTALL)
+        return "\n├── " + k + ": " + lineStr.replaceAll("\\n+", " ");
+    }
+
+    /**
+     * 对应 Python common.misc_utils.hash_str2int：
+     * {@code int(hashlib.sha1(line).hexdigest(), 16) % mod}。
+     */
+    private long hashStr2Int(String line, long mod) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-1");
+            byte[] digest = md.digest(line.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            // 对应 Python：int(hexdigest, 16) —— 用无符号大整数表示 SHA-1 摘要
+            java.math.BigInteger value = new java.math.BigInteger(1, digest);
+            return value.mod(java.math.BigInteger.valueOf(mod)).longValue();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-1 algorithm not available", e);
+        }
+    }
+
+    /**
+     * 将对象转为字符串，null 保留为 null（区别于 {@link #strOf} 将 null 转空串）。
+     * 用于对齐 Python 中 None 与空串语义（如 get_value 返回 None 时 draw_node 会视为空跳过）。
+     */
+    private String strOfNullable(Object o) {
+        return o == null ? null : String.valueOf(o);
     }
 
     /**

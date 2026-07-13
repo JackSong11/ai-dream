@@ -4,6 +4,7 @@ import lombok.Data;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * ES 混合检索（全文 query_string + 向量 KNN，带 weighted_sum 融合）请求参数。
@@ -91,4 +92,12 @@ public class HybridSearchRequest {
      * 分页大小（对应 limit）。
      */
     private int limit = 1024;
+
+    /**
+     * rank_feature 打分字段（对应 Python es_conn.py 中 rank_feature 参数）。
+     *
+     * <p>key 为字段名（如 {@code pagerank_fea} 或 tag 子键），value 为 boost 权重。
+     * 对应 RAGFlow：{@code for fld, sc in rank_feature.items(): bool_query.should.append(Q("rank_feature", ...))}。</p>
+     */
+    private Map<String, Double> rankFeature;
 }

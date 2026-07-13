@@ -23,6 +23,7 @@ public final class FulltextQueryer {
 
     // ===== QueryBase 相关正则 =====
     private static final Pattern SPLIT_WS = Pattern.compile("[ \\t]+");
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
     private static final Pattern ALPHA_ONLY = Pattern.compile("[a-zA-Z]+$");
     private static final Pattern SUB_SPECIAL = Pattern.compile("([:\\{\\}/\\[\\]\\-\\*\\?\"\\(\\)\\|\\+~\\^])");
 
@@ -194,7 +195,7 @@ public final class FulltextQueryer {
         if (!isChinese(txt)) {
             // ===== 非中文分支 =====
             String[] tks = tokenizer.tokenize(txt).trim().isEmpty()
-                    ? new String[0] : tokenizer.tokenize(txt).trim().split("\\s+");
+                    ? new String[0] : WHITESPACE.split(tokenizer.tokenize(txt).trim());
             List<String> keywords = new ArrayList<>();
             for (String t : tks) {
                 if (!t.isEmpty()) {
@@ -259,6 +260,7 @@ public final class FulltextQueryer {
             }
             String query = String.join(" ", q);
             Map<String, Object> extra = new HashMap<>();
+            extra.put(MatchTextExpr.KEY_MINIMUM_SHOULD_MATCH, Math.min(3, Math.round((double) keywords.size() / 10)));
             extra.put(MatchTextExpr.KEY_ORIGINAL_QUERY, originalQuery);
             return new QuestionResult(new MatchTextExpr(queryFields, query, 100, extra), keywords);
         }
