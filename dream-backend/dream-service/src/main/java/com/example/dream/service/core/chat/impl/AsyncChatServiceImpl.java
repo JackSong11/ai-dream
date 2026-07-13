@@ -117,7 +117,8 @@ public class AsyncChatServiceImpl implements AsyncChatService {
 
         Map<String, Object> kwargs = extraParams == null ? new HashMap<>() : new HashMap<>(extraParams);
 
-        log.debug("Begin async_chat");
+        log.info("[RAG对话] 进入 async_chat, convId={}, kbIds={}, stream={}",
+                convId, dialog.getKbIds(), stream);
         // assert messages[-1]["role"] == "user"
         if (CollectionUtils.isEmpty(messages)
                 || !"user".equals(messages.getLast().getRole())) {
@@ -153,8 +154,6 @@ public class AsyncChatServiceImpl implements AsyncChatService {
         List<Long> attachments = null;
 
         String attachmentsText = "";
-        List<String> imageAttachments = new ArrayList<>();
-        List<Object> imageFiles = new ArrayList<>();
 
         Map<String, Object> promptConfig = dialog.getPromptConfig() == null
                 ? new HashMap<>() : new HashMap<>(dialog.getPromptConfig());
@@ -259,6 +258,7 @@ public class AsyncChatServiceImpl implements AsyncChatService {
 
         if (paramKeys.contains("knowledge")) {
             log.debug("Proceeding with retrieval");
+            log.info("[RAG对话] 开始知识库检索, questions={}", questions);
             List<String> userIds = userIdsOf(kbList);
             // 分支 A：Deep Research 模式（Agent 模式）
             if (getBool(promptConfig.get("reasoning"), false) || getBool(kwargs.get("reasoning"), false)) {
@@ -312,6 +312,7 @@ public class AsyncChatServiceImpl implements AsyncChatService {
 
         knowledges = kbPrompt(kbinfos, maxTokens);
         log.debug("{}->{}", String.join(" ", questions), String.join("\n->", knowledges));
+        log.info("[RAG对话] 检索完成, 召回知识片段数={}", knowledges.size());
 
         long retrievalTs = System.nanoTime();
         if (knowledges.isEmpty() && promptConfig.get("empty_response") != null) {
@@ -398,6 +399,7 @@ public class AsyncChatServiceImpl implements AsyncChatService {
 
         List<Map<String, Object>> msgWithoutSystem = msg.subList(1, msg.size());
         if (stream) {
+            log.info("[RAG对话] 开始流式调用大模型生成答案");
             ThinkStreamState lastState = streamlyDelta(chatModel, prompt + prompt4citation, msgWithoutSystem, genConf, null, chunkConsumer, rerankModel);
             String fullAnswer = lastState == null ? "" : lastState.fullText;
             if (StringUtils.isNotBlank(fullAnswer)) {
@@ -407,12 +409,14 @@ public class AsyncChatServiceImpl implements AsyncChatService {
                 chunkConsumer.accept(fin);
             }
         } else {
+            log.info("[RAG对话] 开始非流式调用大模型生成答案");
             String answer = asyncChatCall(chatModel, prompt + prompt4citation, msgWithoutSystem);
             Object userContent = msg.getLast().getOrDefault("content", "[content not available]");
             log.debug("User: {}|Assistant: {}", userContent, answer);
             ChatAnswerBO res = decorateAnswer(answer, dc);
             chunkConsumer.accept(res);
         }
+        log.info("[RAG对话] async_chat 处理结束, convId={}", convId);
     }
 
     // ==================== decorate_answer ====================

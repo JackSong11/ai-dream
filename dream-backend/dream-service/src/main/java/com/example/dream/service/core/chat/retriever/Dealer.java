@@ -308,7 +308,7 @@ public class Dealer implements Retriever {
 
             // total == 0 降级重试（对应 if total == 0）
             if (res.getTotal() == 0) {
-                if (docIds != null && !docIds.isEmpty()) {
+                if (!CollectionUtils.isEmpty(docIds)) {
                     // 有 doc_id：去掉全文/向量表达式，仅按 doc_id 过滤召回
                     DocStoreSearchRequest retry = copyReq(req);
                     retry.setMatchText(null);

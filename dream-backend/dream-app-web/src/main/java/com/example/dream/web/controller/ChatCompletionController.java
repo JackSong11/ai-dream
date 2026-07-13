@@ -56,8 +56,12 @@ public class ChatCompletionController {
     @PostMapping(value = "/completions", produces = MediaType.APPLICATION_JSON_VALUE)
     public Result<ChatAnswerVO> completions(@RequestBody ChatCompletionReqVO reqVo) {
         String userId = UserContext.getUserId();
+        log.info("[聊天补全] 收到非流式请求, userId={}, dialogId={}, convId={}",
+                userId, reqVo.getDialogId(), reqVo.getConvId());
         ChatCompletionReqBO reqBo = toBO(reqVo);
         ChatAnswerBO answer = chatCompletionBizService.completion(reqBo, userId);
+        log.info("[聊天补全] 非流式请求处理完成, userId={}, convId={}, answerId={}",
+                userId, answer == null ? null : answer.getConvId(), answer == null ? null : answer.getId());
         return Result.success(toAnswerVO(answer));
     }
 

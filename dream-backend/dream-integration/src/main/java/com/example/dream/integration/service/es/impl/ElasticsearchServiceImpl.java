@@ -7,9 +7,11 @@ import co.elastic.clients.elasticsearch._types.query_dsl.Query;
 import co.elastic.clients.elasticsearch.core.BulkResponse;
 import co.elastic.clients.elasticsearch.core.GetResponse;
 import co.elastic.clients.elasticsearch.core.IndexResponse;
+import co.elastic.clients.elasticsearch.core.SearchRequest;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
 import co.elastic.clients.elasticsearch.core.search.Hit;
+import co.elastic.clients.json.jackson.JacksonJsonpMapper;
 import com.example.dream.integration.service.es.ElasticsearchService;
 import com.example.dream.integration.service.es.HybridSearchRequest;
 import com.example.dream.integration.service.es.HybridSearchResult;
@@ -19,7 +21,10 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 
+import jakarta.json.spi.JsonProvider;
+import jakarta.json.stream.JsonGenerator;
 import java.io.IOException;
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -331,7 +336,7 @@ public class ElasticsearchServiceImpl implements ElasticsearchService {
         IOException lastIoEx = null;
         for (int attempt = 0; attempt < ATTEMPT_TIME; attempt++) {
             try {
-                SearchResponse<Map> response = client.search(s -> {
+                SearchRequest searchRequest = SearchRequest.of(s -> {
                     s.index(req.getIndexNames())
                             .from(req.getOffset())
                             .size(req.getLimit())
@@ -351,7 +356,12 @@ public class ElasticsearchServiceImpl implements ElasticsearchService {
                                 .similarity((float) req.getSimilarity()));
                     }
                     return s;
-                }, Map.class);
+                });
+
+                // 序列化 SearchRequest 为 JSON 并打印日志
+                logSearchRequest(searchRequest);
+
+                SearchResponse<Map> response = client.search(searchRequest, Map.class);
 
                 // 对应 Python：if str(res.timed_out).lower() == "true": raise Exception("Es Timeout.")
                 if (Boolean.TRUE.equals(response.timedOut())) {
@@ -466,6 +476,32 @@ public class ElasticsearchServiceImpl implements ElasticsearchService {
             field.put("_score", hit.score() == null ? 0.0 : hit.score());
             result.getIds().add(id);
             result.getFields().put(id, field);
+        }
+    }
+
+    /**
+     * 将 {@link SearchRequest} 通过 {@link JacksonJsonpMapper} 序列化为 JSON 并打印日志。
+     * <p>利用 ES 官方客户端自带的序列化机制，在执行前输出完整请求体，便于排查问题。</p>
+     *
+     * @param searchRequest 待执行的搜索请求
+     */
+    private void logSearchRequest(SearchRequest searchRequest) {
+        if (!log.isDebugEnabled()) {
+            return;
+        }
+        try {
+            JacksonJsonpMapper mapper = new JacksonJsonpMapper();
+            StringWriter writer = new StringWriter();
+
+            // 【关键改动】：必须使用 mapper 自己的 jsonProvider 来创建 generator
+            try (JsonGenerator generator = mapper.jsonProvider().createGenerator(writer)) {
+                searchRequest.serialize(generator, mapper);
+            } // 离开 block 会自动执行 generator.close()
+
+            // 日志级别为 DEBUG，仅在 debug 级别开启时才执行序列化，避免生产环境性能开销
+            log.debug("Elasticsearch hybridSearch request JSON:\n{}", writer);
+        } catch (Exception ex) {
+            log.warn("序列化 SearchRequest 为 JSON 失败", ex);
         }
     }
 

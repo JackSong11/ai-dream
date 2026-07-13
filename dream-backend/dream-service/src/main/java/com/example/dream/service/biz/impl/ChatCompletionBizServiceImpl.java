@@ -158,9 +158,11 @@ public class ChatCompletionBizServiceImpl implements ChatCompletionBizService {
                     throw new BizException(ResCodeEnum.DATA_ERROR, "Conversation does not belong to this dialog!");
                 }
                 ctx.conv = conv;
+                log.info("[聊天补全] 复用已有会话, dialogId={}, convId={}", ctx.dialogId, ctx.convId);
             } else {
                 ctx.conv = createSessionForCompletion(ctx.dialogId, ctx.dialog, userId);
                 ctx.convId = ctx.conv.getId();
+                log.info("[聊天补全] 未指定会话, 已新建会话, dialogId={}, convId={}", ctx.dialogId, ctx.convId);
             }
 
             // 历史消息处理策略（对应 pass_all_history_messages 分支）
@@ -532,6 +534,7 @@ public class ChatCompletionBizServiceImpl implements ChatCompletionBizService {
         ctx.conv.setReference(toJson(ctx.convReference));
         ctx.conv.setModifiedTime(new Date());
         conversationCoreService.updateById(ctx.conv);
+        log.info("[聊天补全] 会话已持久化, convId={}", ctx.conv.getId());
     }
 
     // ==================== 转换与工具 ====================
