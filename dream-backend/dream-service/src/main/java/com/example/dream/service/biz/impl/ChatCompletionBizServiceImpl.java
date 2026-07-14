@@ -234,8 +234,9 @@ public class ChatCompletionBizServiceImpl implements ChatCompletionBizService {
      * 结构化答案（对应 structure_answer + 附加 dialog_id）。
      *
      * <p>严格还原 RagFlow structure_answer：reference 非 dict 时置空并补 chunks 字段；
-     * is_final 默认为 true；每个 chunk（非仅 final）都更新会话最后一条 assistant 消息
-     * （非 final 追加、final 覆盖），并按条件回写 reference[-1]。</p>
+     * is_final 默认为 true；每个 chunk（非仅 final）都更新会话最后一条 assistant 消息。
+     * 注意：本项目流式 answer 为「累积全文」，故非 final 普通文本帧采用「覆盖」而非追加，
+     * 仅 think 标记帧追加；final 帧非空则覆盖。并按条件回写 reference[-1]。</p>
      */
     private ChatAnswerBO formatAnswer(CompletionContext ctx, ChatAnswerBO ans) {
         // 对应 Python: reference 非 dict 置空 -> reference["chunks"] = chunks_format(reference)
@@ -295,8 +296,20 @@ public class ChatCompletionBizServiceImpl implements ChatCompletionBizService {
                     last.setId(ctx.messageId);
                 }
             } else {
-                last.setContent((last.getContent() == null ? "" : last.getContent())
-                        + (content == null ? "" : content));
+                // 非 final 帧：本项目流式回调的 ans.answer 为「累积全文」而非「增量片段」
+                // （见 AsyncChatServiceImpl.streamlyDelta，与前端 onDelta 直接覆盖显示的契约一致）。
+                // 因此普通文本帧必须「覆盖」last.content，而不能追加，否则会把
+                // 「累积全文1 + 累积全文2 + ...」层层叠加，导致历史记录里出现内容重复堆叠。
+                // 仅 think 标记帧（start_to_think/end_to_think，content 为 <think>/</think>）
+                // 属于真正的增量标记，需要追加。
+                boolean isThinkMarker = Boolean.TRUE.equals(ans.getStartToThink())
+                        || Boolean.TRUE.equals(ans.getEndToThink());
+                if (isThinkMarker) {
+                    last.setContent((last.getContent() == null ? "" : last.getContent())
+                            + (content == null ? "" : content));
+                } else {
+                    last.setContent(content == null ? "" : content);
+                }
                 last.setCreatedAt(now);
                 last.setId(ctx.messageId);
             }

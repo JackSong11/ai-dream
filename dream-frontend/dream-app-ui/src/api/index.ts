@@ -406,8 +406,8 @@ export interface StreamHandlers {
 
 /**
  * 聊天补全（流式 SSE），对应 POST /api/v1/chat/completions/stream。
- * 后端每帧推送 data: {"code":0,"data":{"answer": 累积全文, "reference": []}}，
- * 结束帧为 data: {"code":0,"data":true}。
+ * 后端每帧推送 data: {"code":0,"data":{"answer": 累积全文, "reference": {...}, "final": false}}，
+ * 结束帧为 data: {"code":0,"data":{"answer":"", "final": true, ...}}（answer 为空，不覆盖内容）。
  */
 export async function chatCompletionStream(
   dialogId: string,
@@ -445,20 +445,39 @@ export async function chatCompletionStream(
   let buffer = ''
 
   const handleFrame = (raw: string): boolean => {
-    const line = raw.replace(/^data:\s*/, '').trim()
+    // 一个 SSE 帧可能包含多行（含 \r），逐行剥离 data: 前缀后拼接为完整 JSON
+    const line = raw
+      .split(/\r?\n/)
+      .map((l) => l.replace(/^data:\s*/, ''))
+      .join('')
+      .trim()
     if (!line) return false
     try {
       const obj = JSON.parse(line)
+
+      // 业务错误码：优先提示并结束
+      if (obj?.code && obj.code !== 0 && obj?.message) {
+        handlers.onError?.(obj.message)
+        return false
+      }
+
       const data = obj?.data
+      // 兼容旧协议：结束帧为 data === true
       if (data === true) {
         handlers.onDone?.()
         return true
       }
-      if (obj?.code && obj.code !== 0 && obj?.message) {
-        handlers.onError?.(obj.message)
-      }
-      if (data && typeof data === 'object' && typeof data.answer === 'string') {
-        handlers.onDelta(data.answer)
+
+      if (data && typeof data === 'object') {
+        // 仅在有非空答案时更新，避免结束帧的空 answer 覆盖已渲染内容
+        if (typeof data.answer === 'string' && data.answer.length > 0) {
+          handlers.onDelta(data.answer)
+        }
+        // RagFlow 协议：final === true 表示流结束
+        if (data.final === true) {
+          handlers.onDone?.()
+          return true
+        }
       }
     } catch {
       // 忽略无法解析的心跳/空帧

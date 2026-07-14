@@ -1201,9 +1201,28 @@ public class AsyncChatServiceImpl implements AsyncChatService {
     private ThinkStreamState streamlyDelta(Object chatMdl, String system, List<Map<String, Object>> msg,
                                            Map<String, Object> genConf, List<Object> images,
                                            Consumer<ChatAnswerBO> consumer, Object ttsMdl) {
-        // TODO 接入真实 LLM 流式生成 + think 拆分。当前返回空状态。
+        // 接入 Spring AI 2.0 ChatModel 流式生成：逐块累积文本并回调累积全文（前端按累积全文覆盖显示）。
+        // TODO 后续补充 <think>/</think> 标记的拆分处理，当前仅做纯文本累积。
         ThinkStreamState state = new ThinkStreamState();
-        state.fullText = "";
+        if (!(chatMdl instanceof ChatModel model)) {
+            return state;
+        }
+        Prompt prompt = buildPrompt(system, msg);
+        StringBuilder full = new StringBuilder();
+        model.stream(prompt).toStream().forEach(resp -> {
+            String delta = extractText(resp);
+            if (delta == null || delta.isEmpty()) {
+                return;
+            }
+            full.append(delta);
+            ChatAnswerBO chunk = new ChatAnswerBO();
+            // answer 传累积全文，与前端 onDelta（直接覆盖显示）契约一致
+            chunk.setAnswer(full.toString());
+            chunk.setReference(new HashMap<>());
+            chunk.setFinalFlag(Boolean.FALSE);
+            consumer.accept(chunk);
+        });
+        state.fullText = full.toString();
         return state;
     }
 

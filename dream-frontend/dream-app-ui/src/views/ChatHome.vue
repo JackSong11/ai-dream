@@ -6,6 +6,7 @@ import {
   getSession,
   listSessions,
   createChat,
+  updateChat,
   createSession,
   chatCompletionStream,
   listDatasets,
@@ -79,6 +80,9 @@ async function handleHistoryClick(chat: Chat): Promise<void> {
   activeChat.value = chat
   messages.value = []
   errorMsg.value = ''
+  // 回填该对话已绑定的知识库，保证 UI 与后端一致
+  const boundId = chat.datasetIds?.[0]
+  selectedKb.value = boundId ? datasets.value.find((d) => d.id === boundId) ?? null : null
   try {
     // 优先复用已有会话，避免每次点击都新建
     const sessions = await listSessions(chat.id, 1, 1)
@@ -93,9 +97,37 @@ async function handleHistoryClick(chat: Chat): Promise<void> {
   scrollToBottom()
 }
 
-function selectKb(kb: KnowledgeBase): void {
+/**
+ * 把当前选中的知识库同步到已存在的对话（dialog）。
+ * 未创建对话时不处理，交由首次 handleSubmit 的 createChat 暂存。
+ */
+async function syncKbToChat(): Promise<void> {
+  if (!activeChat.value) return
+  const kbIds = selectedKb.value ? [selectedKb.value.id] : []
+  // 与当前对话已绑定的知识库一致则跳过，避免多余请求
+  const current = activeChat.value.datasetIds ?? []
+  if (current.length === kbIds.length && current.every((id) => kbIds.includes(id))) return
+  try {
+    const updated = await updateChat(activeChat.value.id, {
+      name: activeChat.value.name,
+      datasetIds: kbIds
+    })
+    activeChat.value = updated
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : '更新知识库绑定失败'
+  }
+}
+
+async function selectKb(kb: KnowledgeBase): Promise<void> {
   selectedKb.value = kb
   showKbSelector.value = false
+  await syncKbToChat()
+}
+
+/** 取消知识库绑定（同步到已存在对话） */
+async function clearKb(): Promise<void> {
+  selectedKb.value = null
+  await syncKbToChat()
 }
 
 function pickModel(m: string): void {
@@ -252,7 +284,7 @@ onBeforeUnmount(() => {
             >
               <i class="fas fa-book"></i>
               已绑定: {{ selectedKb.name }}
-              <i class="fas fa-times cursor-pointer hover:text-blue-800 ml-[4px]" @click="selectedKb = null"></i>
+              <i class="fas fa-times cursor-pointer hover:text-blue-800 ml-[4px]" @click="clearKb"></i>
             </div>
             <form
               class="bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.08)] border border-gray-100 flex flex-col p-[16px] focus-within:shadow-[0_4px_16px_rgba(0,0,0,0.12)] transition-shadow"
@@ -368,7 +400,7 @@ onBeforeUnmount(() => {
         >
           <i class="fas fa-book"></i>
           已绑定: {{ selectedKb.name }}
-          <i class="fas fa-times cursor-pointer hover:text-blue-800 ml-[4px]" @click="selectedKb = null"></i>
+          <i class="fas fa-times cursor-pointer hover:text-blue-800 ml-[4px]" @click="clearKb"></i>
         </div>
         <p v-if="errorMsg" class="text-center text-[12px] text-red-500 mb-[8px]">{{ errorMsg }}</p>
         <form
