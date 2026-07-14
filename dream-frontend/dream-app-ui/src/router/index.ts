@@ -4,7 +4,7 @@ import { tokenStore } from '../api'
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
-    redirect: '/home'
+    redirect: '/chat-home'
   },
   {
     path: '/login',
@@ -12,9 +12,9 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../views/Login.vue')
   },
   {
-    path: '/home',
-    name: 'home',
-    component: () => import('../views/Home.vue'),
+    path: '/chat-home',
+    name: 'chat-home',
+    component: () => import('../views/ChatHome.vue'),
     meta: { requiresAuth: true }
   },
   {
@@ -27,12 +27,6 @@ const routes: RouteRecordRaw[] = [
     path: '/knowledge-base/:datasetId/documents',
     name: 'documents',
     component: () => import('../views/Documents.vue'),
-    meta: { requiresAuth: true }
-  },
-  {
-    path: '/chat',
-    name: 'chat',
-    component: () => import('../views/Chat.vue'),
     meta: { requiresAuth: true }
   }
 ]
@@ -48,7 +42,7 @@ router.beforeEach((to) => {
     return { name: 'login' }
   }
   if (to.name === 'login' && tokenStore.get()) {
-    return { name: 'home' }
+    return { name: 'chat-home' }
   }
   return true
 })

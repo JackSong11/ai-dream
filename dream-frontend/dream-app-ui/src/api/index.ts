@@ -396,3 +396,86 @@ export function ingestDocuments(
     })
   })
 }
+
+/** 流式回调：onDelta 收到累积的完整答案文本；onDone 结束；onError 出错 */
+export interface StreamHandlers {
+  onDelta: (answer: string) => void
+  onDone?: () => void
+  onError?: (msg: string) => void
+}
+
+/**
+ * 聊天补全（流式 SSE），对应 POST /api/v1/chat/completions/stream。
+ * 后端每帧推送 data: {"code":0,"data":{"answer": 累积全文, "reference": []}}，
+ * 结束帧为 data: {"code":0,"data":true}。
+ */
+export async function chatCompletionStream(
+  dialogId: string,
+  convId: string,
+  question: string,
+  handlers: StreamHandlers
+): Promise<void> {
+  const token = tokenStore.get()
+  const res = await fetch(BASE_URL + '/api/v1/chat/completions/stream', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      ...(token ? { Authorization: 'Bearer ' + token } : {})
+    },
+    body: JSON.stringify({
+      dialogId,
+      convId,
+      messages: [{ role: 'user', content: question }]
+    })
+  })
+
+  if (res.status === 401) {
+    tokenStore.clear()
+    handlers.onError?.('登录已失效，请重新登录')
+    return
+  }
+  if (!res.body) {
+    handlers.onError?.('服务端未返回数据流')
+    return
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+
+  const handleFrame = (raw: string): boolean => {
+    const line = raw.replace(/^data:\s*/, '').trim()
+    if (!line) return false
+    try {
+      const obj = JSON.parse(line)
+      const data = obj?.data
+      if (data === true) {
+        handlers.onDone?.()
+        return true
+      }
+      if (obj?.code && obj.code !== 0 && obj?.message) {
+        handlers.onError?.(obj.message)
+      }
+      if (data && typeof data === 'object' && typeof data.answer === 'string') {
+        handlers.onDelta(data.answer)
+      }
+    } catch {
+      // 忽略无法解析的心跳/空帧
+    }
+    return false
+  }
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const parts = buffer.split(/\n\n/)
+    buffer = parts.pop() ?? ''
+    for (const part of parts) {
+      if (handleFrame(part)) return
+    }
+  }
+  if (buffer.trim()) handleFrame(buffer)
+  handlers.onDone?.()
+}

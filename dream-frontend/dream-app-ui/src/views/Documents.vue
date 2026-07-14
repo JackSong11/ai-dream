@@ -20,22 +20,19 @@ const loading = ref(false)
 const errorMsg = ref('')
 const keywords = ref('')
 
-// 上传相关
 const fileInput = ref<HTMLInputElement | null>(null)
 const uploading = ref(false)
-// 正在解析操作中的文档 id 集合
 const busyIds = ref<Set<string>>(new Set())
 
-// 轮询定时器：存在解析中的文档时，定时静默刷新列表以呈现进度实时更新
 const POLL_INTERVAL = 3000
 let pollTimer: number | null = null
 
 const runStatusMap: Record<number, { text: string; cls: string }> = {
-  0: { text: '未开始', cls: 'st-unstart' },
-  1: { text: '解析中', cls: 'st-running' },
-  2: { text: '已取消', cls: 'st-cancel' },
-  3: { text: '已完成', cls: 'st-done' },
-  4: { text: '失败', cls: 'st-fail' }
+  0: { text: '未开始', cls: 'bg-surface-dim text-ink-faint' },
+  1: { text: '解析中', cls: 'bg-blue-50 text-blue-600' },
+  2: { text: '已取消', cls: 'bg-amber-50 text-amber-600' },
+  3: { text: '已完成', cls: 'bg-green-50 text-green-600' },
+  4: { text: '失败', cls: 'bg-red-50 text-red-600' }
 }
 
 function statusInfo(run: number | null) {
@@ -49,7 +46,6 @@ function formatSize(size: number | null): string {
   return `${(size / 1024 / 1024).toFixed(1)} MB`
 }
 
-/** 进度百分比（0~100），失败(-1)按 0 处理，仅用于进度条宽度 */
 function progressPercent(doc: DocItem): number {
   const p = doc.progress ?? 0
   if (p < 0) return 100
@@ -57,13 +53,8 @@ function progressPercent(doc: DocItem): number {
 }
 
 const hasDocs = computed(() => docs.value.length > 0)
-
-// 是否存在解析中的文档（对齐 RagFlow：有 RUNNING 文档才轮询）
 const hasRunning = computed(() => docs.value.some((d) => d.run === 1))
 
-/**
- * 加载文档列表。silent=true 时用于轮询刷新，不显示整页 loading，避免闪烁。
- */
 async function load(silent = false): Promise<void> {
   if (!silent) loading.value = true
   errorMsg.value = ''
@@ -79,7 +70,6 @@ async function load(silent = false): Promise<void> {
   }
 }
 
-/** 根据是否存在解析中的文档，自动开启 / 关闭轮询 */
 function syncPolling(): void {
   if (hasRunning.value && pollTimer === null) {
     pollTimer = window.setInterval(() => load(true), POLL_INTERVAL)
@@ -89,12 +79,10 @@ function syncPolling(): void {
   }
 }
 
-/** 点击「上传文档」触发文件选择 */
 function triggerUpload(): void {
   fileInput.value?.click()
 }
 
-/** 选择文件后上传，对应 POST /documents/upload */
 async function onFilesSelected(e: Event): Promise<void> {
   const input = e.target as HTMLInputElement
   const files = input.files ? Array.from(input.files) : []
@@ -109,12 +97,10 @@ async function onFilesSelected(e: Event): Promise<void> {
     errorMsg.value = err instanceof Error ? err.message : '上传失败'
   } finally {
     uploading.value = false
-    // 清空以便重复选择同一文件
     input.value = ''
   }
 }
 
-/** 触发解析 / 取消解析，对应 POST /documents/ingest（run: 1=解析, 2=取消） */
 async function runIngest(doc: DocItem, run: number): Promise<void> {
   busyIds.value.add(doc.id)
   errorMsg.value = ''
@@ -128,7 +114,6 @@ async function runIngest(doc: DocItem, run: number): Promise<void> {
   }
 }
 
-/** 删除文档（复用 ingest 的 delete 语义） */
 async function removeDoc(doc: DocItem): Promise<void> {
   if (!confirm(`确定删除文档「${doc.name}」？`)) return
   busyIds.value.add(doc.id)
@@ -154,350 +139,116 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="doc-page">
-    <div class="grid-bg"></div>
-    <div class="glow glow-1"></div>
-
-    <header class="topbar">
-      <div class="crumb">
-        <span class="link" @click="router.push({ name: 'knowledge-base' })">知识库</span>
-        <span class="sep">/</span>
-        <span class="cur">{{ datasetName }}</span>
+  <div class="min-h-screen bg-canvas text-ink">
+    <!-- Top bar -->
+    <header class="sticky top-0 z-10 flex items-center justify-between border-b border-line-soft bg-surface px-8 py-3">
+      <div class="flex items-center gap-1 text-sm text-ink-faint">
+        <span class="cursor-pointer hover:text-accent transition" @click="router.push({ name: 'knowledge-base' })">知识库</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mx-1"><path d="m9 18 6-6-6-6"/></svg>
+        <span class="font-medium text-ink">{{ datasetName }}</span>
       </div>
-      <button class="ghost-btn" @click="router.push({ name: 'knowledge-base' })">返回列表</button>
+      <button
+        class="rounded-full px-4 py-1.5 text-sm text-ink-soft hover:bg-surface-dim transition"
+        @click="router.push({ name: 'knowledge-base' })"
+      >
+        返回列表
+      </button>
     </header>
 
-    <main class="content">
-      <div class="toolbar">
-        <h1>文档列表 <span class="count">{{ total }}</span></h1>
-        <div class="tools-right">
+    <main class="mx-auto max-w-[960px] px-6 py-8">
+      <div class="mb-6 flex items-center justify-between">
+        <h1 class="text-xl font-semibold">
+          文档列表
+          <span class="ml-2 text-sm font-normal text-ink-faint">{{ total }} 个</span>
+        </h1>
+        <div class="flex items-center gap-2">
           <input
             v-model="keywords"
-            class="search"
-            placeholder="搜索文档名称"
-            @keyup.enter="load"
+            class="w-48 rounded-full border border-line bg-surface px-4 py-1.5 text-sm outline-none placeholder:text-ink-faint focus:border-accent"
+            placeholder="搜索文档"
+            @keyup.enter="load()"
           />
-          <button class="primary-btn" :disabled="uploading" @click="triggerUpload">
-            {{ uploading ? '上传中…' : '+ 上传文档' }}
+          <button
+            class="whitespace-nowrap rounded-full bg-accent px-4 py-1.5 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+            :disabled="uploading"
+            @click="triggerUpload"
+          >
+            {{ uploading ? '上传中...' : '上传文档' }}
           </button>
-          <input
-            ref="fileInput"
-            type="file"
-            multiple
-            class="hidden-input"
-            @change="onFilesSelected"
-          />
+          <input ref="fileInput" type="file" multiple class="hidden" @change="onFilesSelected" />
         </div>
       </div>
 
-      <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
+      <p v-if="errorMsg" class="mb-4 text-sm text-red-600">{{ errorMsg }}</p>
 
-      <div v-if="loading" class="empty">加载中…</div>
-      <div v-else-if="!hasDocs" class="empty">该知识库暂无文档，点击右上角上传</div>
+      <div v-if="loading" class="py-20 text-center text-sm text-ink-faint">加载中...</div>
+      <div v-else-if="!hasDocs" class="py-20 text-center text-sm text-ink-faint">
+        该知识库暂无文档，点击右上角上传
+      </div>
 
-      <table v-else class="doc-table">
-        <thead>
-          <tr>
-            <th>文档名称</th>
-            <th>类型</th>
-            <th>大小</th>
-            <th>分块数</th>
-            <th>状态</th>
-            <th>创建时间</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="doc in docs" :key="doc.id">
-            <td class="name-cell">
-              <span class="suffix-tag">{{ doc.suffix || '?' }}</span>
-              {{ doc.name }}
-            </td>
-            <td>{{ doc.type || '-' }}</td>
-            <td>{{ formatSize(doc.size) }}</td>
-            <td>{{ doc.chunkCount ?? 0 }}</td>
-            <td class="status-cell">
-              <span class="status" :class="statusInfo(doc.run).cls">
-                {{ statusInfo(doc.run).text }}
-                <span v-if="doc.run === 1" class="pct">{{ progressPercent(doc) }}%</span>
-              </span>
-              <!-- 解析中 / 已完成 展示进度条，鼠标悬停可见最新进度日志 -->
-              <div
-                v-if="doc.run === 1 || doc.run === 3"
-                class="progress-track"
-                :title="doc.progressMsg || ''"
-              >
+      <div v-else class="overflow-hidden rounded-xl border border-line bg-surface">
+        <table class="w-full border-collapse text-sm">
+          <thead>
+            <tr class="border-b border-line-soft text-left text-xs text-ink-faint">
+              <th class="px-4 py-3 font-medium">文档名称</th>
+              <th class="px-4 py-3 font-medium">类型</th>
+              <th class="px-4 py-3 font-medium">大小</th>
+              <th class="px-4 py-3 font-medium">分块数</th>
+              <th class="px-4 py-3 font-medium">状态</th>
+              <th class="px-4 py-3 font-medium">创建时间</th>
+              <th class="px-4 py-3 font-medium">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="doc in docs" :key="doc.id" class="border-b border-line-soft transition hover:bg-canvas/50">
+              <td class="px-4 py-3">
+                <span class="mr-2 rounded bg-accent-soft px-1.5 py-0.5 text-[11px] font-medium text-accent">{{ doc.suffix || '?' }}</span>
+                <span class="font-medium">{{ doc.name }}</span>
+              </td>
+              <td class="px-4 py-3 text-ink-faint">{{ doc.type || '-' }}</td>
+              <td class="px-4 py-3 text-ink-faint">{{ formatSize(doc.size) }}</td>
+              <td class="px-4 py-3 text-ink-faint">{{ doc.chunkCount ?? 0 }}</td>
+              <td class="min-w-[120px] px-4 py-3">
+                <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium" :class="statusInfo(doc.run).cls">
+                  {{ statusInfo(doc.run).text }}
+                  <span v-if="doc.run === 1" class="ml-1">{{ progressPercent(doc) }}%</span>
+                </span>
                 <div
-                  class="progress-bar"
-                  :class="{ done: doc.run === 3 }"
-                  :style="{ width: progressPercent(doc) + '%' }"
-                ></div>
-              </div>
-            </td>
-            <td class="time-cell">{{ doc.createdTime }}</td>
-            <td class="op-cell">
-              <button
-                v-if="doc.run === 1"
-                class="op-btn"
-                :disabled="isBusy(doc.id)"
-                @click="runIngest(doc, 2)"
-              >取消</button>
-              <button
-                v-else
-                class="op-btn primary"
-                :disabled="isBusy(doc.id)"
-                @click="runIngest(doc, 1)"
-              >{{ doc.run === 3 ? '重新解析' : '解析' }}</button>
-              <button
-                class="op-btn danger"
-                :disabled="isBusy(doc.id)"
-                @click="removeDoc(doc)"
-              >删除</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+                  v-if="doc.run === 1 || doc.run === 3"
+                  class="mt-1.5 h-1 w-20 overflow-hidden rounded-full bg-surface-dim"
+                  :title="doc.progressMsg || ''"
+                >
+                  <div
+                    class="h-full rounded-full transition-all duration-500"
+                    :class="doc.run === 3 ? 'bg-green-500' : 'bg-accent'"
+                    :style="{ width: progressPercent(doc) + '%' }"
+                  ></div>
+                </div>
+              </td>
+              <td class="px-4 py-3 text-xs text-ink-faint">{{ doc.createdTime }}</td>
+              <td class="whitespace-nowrap px-4 py-3">
+                <button
+                  v-if="doc.run === 1"
+                  class="mr-1 rounded-full px-3 py-1 text-xs text-ink-soft hover:bg-surface-dim transition disabled:opacity-50"
+                  :disabled="isBusy(doc.id)"
+                  @click="runIngest(doc, 2)"
+                >取消</button>
+                <button
+                  v-else
+                  class="mr-1 rounded-full bg-accent-soft px-3 py-1 text-xs font-medium text-accent hover:bg-blue-100 transition disabled:opacity-50"
+                  :disabled="isBusy(doc.id)"
+                  @click="runIngest(doc, 1)"
+                >{{ doc.run === 3 ? '重新解析' : '解析' }}</button>
+                <button
+                  class="rounded-full bg-red-50 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-100 transition disabled:opacity-50"
+                  :disabled="isBusy(doc.id)"
+                  @click="removeDoc(doc)"
+                >删除</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </main>
   </div>
 </template>
-
-<style scoped>
-.doc-page {
-  position: relative;
-  min-height: 100vh;
-  background: #0a0e1a;
-  overflow-x: hidden;
-}
-.grid-bg {
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(rgba(80, 130, 255, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(80, 130, 255, 0.05) 1px, transparent 1px);
-  background-size: 44px 44px;
-  mask-image: radial-gradient(ellipse at top, #000 20%, transparent 70%);
-}
-.glow-1 {
-  position: absolute;
-  width: 500px;
-  height: 500px;
-  border-radius: 50%;
-  filter: blur(120px);
-  opacity: 0.35;
-  background: #3b6bff;
-  top: -180px;
-  right: -120px;
-}
-.topbar {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 18px 40px;
-  border-bottom: 1px solid rgba(120, 160, 255, 0.12);
-}
-.crumb {
-  color: #9aa4bf;
-  font-size: 14px;
-}
-.crumb .link {
-  color: #7fb0ff;
-  cursor: pointer;
-}
-.crumb .sep {
-  margin: 0 8px;
-  color: #4a5372;
-}
-.crumb .cur {
-  color: #fff;
-  font-weight: 600;
-}
-.ghost-btn {
-  padding: 9px 16px;
-  border-radius: 8px;
-  border: 1px solid rgba(120, 160, 255, 0.3);
-  background: transparent;
-  color: #cdd6f0;
-  cursor: pointer;
-}
-.content {
-  position: relative;
-  z-index: 2;
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 36px 24px;
-}
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 22px;
-}
-.toolbar h1 {
-  color: #fff;
-  font-size: 22px;
-}
-.count {
-  margin-left: 6px;
-  font-size: 14px;
-  color: #00d4ff;
-}
-.search {
-  width: 240px;
-  padding: 9px 14px;
-  border-radius: 8px;
-  border: 1px solid rgba(120, 160, 255, 0.25);
-  background: rgba(20, 26, 44, 0.6);
-  color: #eaf0ff;
-  outline: none;
-}
-.tools-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.primary-btn {
-  padding: 9px 18px;
-  border-radius: 8px;
-  border: none;
-  background: linear-gradient(135deg, #3b6bff, #00d4ff);
-  color: #fff;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.primary-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-.hidden-input {
-  display: none;
-}
-.op-cell {
-  white-space: nowrap;
-}
-.op-btn {
-  margin-right: 8px;
-  padding: 5px 12px;
-  border-radius: 6px;
-  border: 1px solid rgba(120, 160, 255, 0.3);
-  background: transparent;
-  color: #cdd6f0;
-  font-size: 12px;
-  cursor: pointer;
-}
-.op-btn:hover {
-  background: rgba(59, 107, 255, 0.12);
-}
-.op-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.op-btn.primary {
-  border-color: rgba(59, 107, 255, 0.6);
-  color: #7fb0ff;
-}
-.op-btn.danger {
-  border-color: rgba(255, 90, 110, 0.4);
-  color: #ff6b81;
-}
-.doc-table {
-  width: 100%;
-  border-collapse: collapse;
-  background: rgba(20, 26, 44, 0.6);
-  border-radius: 12px;
-  overflow: hidden;
-}
-.doc-table th {
-  text-align: left;
-  padding: 14px 16px;
-  font-size: 13px;
-  color: #8b95b0;
-  border-bottom: 1px solid rgba(120, 160, 255, 0.15);
-}
-.doc-table td {
-  padding: 14px 16px;
-  font-size: 14px;
-  color: #d4dcf0;
-  border-bottom: 1px solid rgba(120, 160, 255, 0.08);
-}
-.doc-table tbody tr:hover {
-  background: rgba(59, 107, 255, 0.06);
-}
-.name-cell {
-  color: #fff;
-}
-.suffix-tag {
-  display: inline-block;
-  margin-right: 8px;
-  padding: 2px 8px;
-  font-size: 11px;
-  border-radius: 5px;
-  background: rgba(59, 107, 255, 0.18);
-  color: #7fb0ff;
-  text-transform: uppercase;
-}
-.time-cell {
-  color: #6c7690;
-  font-size: 13px;
-}
-.status {
-  padding: 3px 10px;
-  border-radius: 20px;
-  font-size: 12px;
-}
-.status-cell {
-  min-width: 130px;
-}
-.pct {
-  margin-left: 6px;
-  font-weight: 600;
-}
-.progress-track {
-  margin-top: 8px;
-  width: 110px;
-  height: 6px;
-  border-radius: 4px;
-  background: rgba(120, 160, 255, 0.15);
-  overflow: hidden;
-}
-.progress-bar {
-  height: 100%;
-  border-radius: 4px;
-  background: linear-gradient(90deg, #3b6bff, #00d4ff);
-  transition: width 0.4s ease;
-}
-.progress-bar.done {
-  background: linear-gradient(90deg, #32c878, #4fd88a);
-}
-.st-unstart {
-  background: rgba(120, 130, 160, 0.2);
-  color: #a2acc8;
-}
-.st-running {
-  background: rgba(59, 107, 255, 0.2);
-  color: #7fb0ff;
-}
-.st-cancel {
-  background: rgba(180, 150, 60, 0.2);
-  color: #e0c060;
-}
-.st-done {
-  background: rgba(50, 200, 120, 0.18);
-  color: #4fd88a;
-}
-.st-fail {
-  background: rgba(255, 90, 110, 0.18);
-  color: #ff6b81;
-}
-.empty {
-  padding: 80px 0;
-  text-align: center;
-  color: #6c7690;
-}
-.error {
-  color: #ff6b81;
-  margin-bottom: 12px;
-}
-</style>
