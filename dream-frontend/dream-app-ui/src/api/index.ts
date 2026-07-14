@@ -229,6 +229,25 @@ export function uploadDocuments(datasetId: string, files: File[]): Promise<DocIt
   })
 }
 
+// ==================== 多模型 ====================
+
+/** 可用模型信息（对应后端 ModelInfoVO） */
+export interface ModelInfo {
+  /** 模型标识（切换时使用） */
+  modelKey: string
+  /** 模型展示名称 */
+  name: string
+  /** 底层真实模型名 */
+  model: string
+  /** 是否为当前默认模型 */
+  current: boolean
+}
+
+/** 查询所有可用模型列表，对应 GET /ai/multi-model/models */
+export function listModels(): Promise<ModelInfo[]> {
+  return request<ModelInfo[]>('/ai/multi-model/models', { method: 'GET' })
+}
+
 // ==================== 聊天助手 / 会话 ====================
 
 /** 聊天助手（Chat） */

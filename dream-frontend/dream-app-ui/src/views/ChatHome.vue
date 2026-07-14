@@ -10,9 +10,11 @@ import {
   createSession,
   chatCompletionStream,
   listDatasets,
+  listModels,
   type Chat,
   type ChatMessage,
-  type KnowledgeBase
+  type KnowledgeBase,
+  type ModelInfo
 } from '../api'
 import AppSidebar from '../components/AppSidebar.vue'
 
@@ -22,7 +24,7 @@ const route = useRoute()
 /** 共享侧边栏引用（用于刷新历史列表） */
 const sidebarRef = ref<InstanceType<typeof AppSidebar> | null>(null)
 
-/** 当前登录用户（顶部空状态标题��示，由侧边栏加载后同步不再需要） */
+/** 当前登录用户（顶部空状态标题展示） */
 const currentUser = ref('')
 
 /** 侧边栏展开/收起 */
@@ -37,10 +39,15 @@ const datasets = ref<KnowledgeBase[]>([])
 const selectedKb = ref<KnowledgeBase | null>(null)
 const showKbSelector = ref(false)
 
-/** 模型（占位，无接口） */
-const models = ['Flash', 'Kimi-K2.5', 'Qwen3.5-122B', 'GPT-4o']
-const selectedModel = ref(models[0])
+/** 模型列表（真实接口） */
+const models = ref<ModelInfo[]>([])
+const selectedModelKey = ref('')
 const showModelMenu = ref(false)
+
+/** 当前选中模型的展示名称 */
+const selectedModelName = computed(
+  () => models.value.find((m) => m.modelKey === selectedModelKey.value)?.name ?? '模型'
+)
 
 /** 消息与输入 */
 const messages = ref<ChatMessage[]>([])
@@ -130,9 +137,21 @@ async function clearKb(): Promise<void> {
   await syncKbToChat()
 }
 
-function pickModel(m: string): void {
-  selectedModel.value = m
+function pickModel(m: ModelInfo): void {
+  selectedModelKey.value = m.modelKey
   showModelMenu.value = false
+}
+
+/** 加载可用模型列表，默认选中后端标记的 current 模型 */
+async function loadModels(): Promise<void> {
+  try {
+    const list = await listModels()
+    models.value = list
+    const current = list.find((m) => m.current) ?? list[0]
+    selectedModelKey.value = current?.modelKey ?? ''
+  } catch {
+    models.value = []
+  }
 }
 
 async function handleSubmit(): Promise<void> {
@@ -219,6 +238,7 @@ function onSidebarSelectChat(chat: Chat): void {
 
 onMounted(async () => {
   loadDatasets()
+  loadModels()
   document.addEventListener('click', handleClickOutside)
 
   // 顶部问候语所需用户名
@@ -330,7 +350,7 @@ onBeforeUnmount(() => {
                       class="flex items-center gap-[4px] cursor-pointer hover:bg-gray-100 px-[8px] py-[4px] rounded-[8px]"
                       @click="showModelMenu = !showModelMenu"
                     >
-                      <span class="text-[14px]">{{ selectedModel }}</span>
+                      <span class="text-[14px]">{{ selectedModelName }}</span>
                       <i class="fas fa-chevron-down inline-flex items-center justify-center w-[12px] h-[12px] text-[12px]"></i>
                     </div>
                     <div
@@ -339,13 +359,14 @@ onBeforeUnmount(() => {
                     >
                       <div
                         v-for="m in models"
-                        :key="m"
+                        :key="m.modelKey"
                         class="px-[16px] py-[8px] hover:bg-gray-50 text-[13px] cursor-pointer flex items-center justify-between transition-colors"
                         @click="pickModel(m)"
                       >
-                        {{ m }}
-                        <i v-if="m === selectedModel" class="fas fa-check text-blue-500 text-[12px]"></i>
+                        {{ m.name }}
+                        <i v-if="m.modelKey === selectedModelKey" class="fas fa-check text-blue-500 text-[12px]"></i>
                       </div>
+                      <div v-if="!models.length" class="px-[16px] py-[8px] text-[13px] text-gray-400">暂无可用模型</div>
                     </div>
                   </div>
                   <button
@@ -447,7 +468,7 @@ onBeforeUnmount(() => {
                   class="flex items-center gap-[4px] cursor-pointer hover:bg-gray-100 px-[8px] py-[4px] rounded-[8px]"
                   @click="showModelMenu = !showModelMenu"
                 >
-                  <span class="text-[14px]">{{ selectedModel }}</span>
+                  <span class="text-[14px]">{{ selectedModelName }}</span>
                   <i class="fas fa-chevron-down inline-flex items-center justify-center w-[12px] h-[12px] text-[12px]"></i>
                 </div>
                 <div
@@ -456,13 +477,14 @@ onBeforeUnmount(() => {
                 >
                   <div
                     v-for="m in models"
-                    :key="m"
+                    :key="m.modelKey"
                     class="px-[16px] py-[8px] hover:bg-gray-50 text-[13px] cursor-pointer flex items-center justify-between transition-colors"
                     @click="pickModel(m)"
                   >
-                    {{ m }}
-                    <i v-if="m === selectedModel" class="fas fa-check text-blue-500 text-[12px]"></i>
+                    {{ m.name }}
+                    <i v-if="m.modelKey === selectedModelKey" class="fas fa-check text-blue-500 text-[12px]"></i>
                   </div>
+                  <div v-if="!models.length" class="px-[16px] py-[8px] text-[13px] text-gray-400">暂无可用模型</div>
                 </div>
               </div>
               <button
