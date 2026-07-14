@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import KbManager from './components/KbManager.jsx';
+import KbDetail from './components/KbDetail.jsx';
 
 const useChat = window.ZeroAI?.useChat || function () {
 const [messages, setMessages] = React.useState([]);
@@ -47,13 +49,13 @@ const mockKnowledgeBases = [
 ];
 
 const mockHistory = [
-"LangGraph Checkpointer: 状态持久化...",
-"LangGraph Checkpointer 面试回答指南",
-"LangGraph State 深度解析与应用",
-"LangGraph State: Centralized, Evolving...",
-"AI 对话助手前端代码生成",
-"LangGraph 中断本质：状态持久化与控...",
-"AI 界面优化与组件建议"
+{ title: "LangGraph Checkpointer: 状态持久化...", time: "今天 10:30" },
+{ title: "LangGraph Checkpointer 面试回答指南", time: "昨天" },
+{ title: "LangGraph State 深度解析与应用", time: "昨天" },
+{ title: "LangGraph State: Centralized, Evolving...", time: "07-12" },
+{ title: "AI 对话助手前端代码生成", time: "07-11" },
+{ title: "LangGraph 中断本质：状态持久化与控...", time: "07-10" },
+{ title: "AI 界面优化与组件建议", time: "07-10" }
 ];
 
 function App() {
@@ -94,6 +96,7 @@ const [selectedKb, setSelectedKb] = useState(null);
 const [showKbSelector, setShowKbSelector] = useState(false);
 const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 const [activeHistoryIdx, setActiveHistoryIdx] = useState(null);
+const [currentKb, setCurrentKb] = useState(null);
 const isLoading = status === 'streaming' || status === 'submitted';
 const messagesEndRef = useRef(null);
 
@@ -116,8 +119,8 @@ const handleHistoryClick = (idx, item) => {
 setActiveHistoryIdx(idx);
 if (typeof setMessages === 'function') {
 setMessages([
-{ id: `hist-${idx}-1`, role: 'user', parts: [{ type: 'text', text: `帮我回顾一下关于“${item}”的讨论` }] },
-{ id: `hist-${idx}-2`, role: 'assistant', parts: [{ type: 'text', text: `好的，这是关于“${item}”的历史对话内容回顾...` }] }
+{ id: `hist-${idx}-1`, role: 'user', parts: [{ type: 'text', text: `帮我回顾一下关于“${item.title}”的讨论` }] },
+{ id: `hist-${idx}-2`, role: 'assistant', parts: [{ type: 'text', text: `好的，这是关于“${item.title}”的历史对话内容回顾...` }] }
 ]);
 }
 };
@@ -158,7 +161,12 @@ data-ai-alt="新建对话按钮"
 </div>
 {/* 知识库入口 */}
 <div className="px-[12px] mb-[16px]" data-ai-alt="知识库入口区" data-ai-changelog-id="sidebar-kb-nav" data-ai-changelog-title="知识库管理导航" data-ai-changelog-desc="侧边栏新增知识库入口，方便用户管理知识资产">
-<button className="flex items-center hover:bg-gray-200/50 rounded-[8px] px-[12px] py-[10px] text-[14px] w-full transition-colors text-gray-700" data-ai-alt="知识库管理按钮">
+<button
+className={`flex items-center rounded-[8px] px-[12px] py-[10px] text-[14px] w-full transition-colors ${currentPage === 'kbManager' || currentPage === 'kbDetail' ? 'bg-gray-200/50 text-gray-900 font-medium' : 'hover:bg-gray-200/50 text-gray-700'}`}
+onClick={() => setCurrentPage('kbManager')}
+data-action="go-kbManager"
+data-ai-alt="知识库管理按钮"
+>
 <i className="fas fa-database text-[16px] text-gray-600 w-[16px] flex items-center justify-center shrink-0"></i>
 <span className="ml-[12px] font-medium">知识库管理</span>
 </button>
@@ -173,10 +181,11 @@ return (
 <li
 key={idx}
 onClick={() => handleHistoryClick(idx, item)}
-className={`px-[16px] py-[10px] cursor-pointer transition-colors flex items-center rounded-full text-[13px] ${isActive ? 'bg-[#E8EAED] text-gray-900 font-medium' : 'hover:bg-gray-200/50 text-gray-700'}`}
+className={`px-[16px] py-[10px] cursor-pointer transition-colors flex items-center justify-between rounded-full text-[13px] ${isActive ? 'bg-[#E8EAED] text-gray-900 font-medium' : 'hover:bg-gray-200/50 text-gray-700'}`}
 data-ai-alt="历史记录项"
 >
-<span className="flex-1 truncate">{item}</span>
+<span className="flex-1 truncate pr-[8px]">{item.title}</span>
+<span className="text-[11px] text-gray-400 shrink-0">{item.time}</span>
 </li>
 );
 })}
@@ -232,49 +241,56 @@ data-ai-alt="历史记录项"
                     <i className="fas fa-times cursor-pointer hover:text-blue-800 ml-[4px]" onClick={() => setSelectedKb(null)} data-ai-alt="取消绑定"></i>
                   </div>
                 )}
-                <form onSubmit={handleSubmit} className="bg-white rounded-[32px] shadow-[0_2px_12px_rgba(0,0,0,0.08)] border border-gray-100 flex items-center px-[24px] py-[12px] focus-within:shadow-[0_4px_16px_rgba(0,0,0,0.12)] transition-shadow" data-ai-alt="输入表单">
-                  <div className="relative flex items-center" data-ai-changelog-id="kb-binding-area" data-ai-changelog-title="知识库绑定与选择" data-ai-changelog-desc="支持对话过程中绑定知识库，实现基于指定知识库内容的增强问答">
-                    <i
-                      className={`fas fa-plus inline-flex items-center justify-center w-[16px] h-[16px] mr-[16px] cursor-pointer transition-colors ${selectedKb ? 'text-blue-500' : 'text-gray-400 hover:text-blue-500'}`}
-                      title="添加附件或绑定知识库"
-                      onClick={() => setShowKbSelector(!showKbSelector)}
-                      data-ai-alt="添加附件及知识库"
-                      data-knowledge-citationid="kg://1963882999952154625/2071940487574765569/2071941880326688770/1#1782824414067706_ca493409fb9ff683_20260630210015_0"
-                    ></i>
-                    {showKbSelector && (
-                      <div className="absolute bottom-[36px] left-[-8px] w-[220px] bg-white border border-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.1)] rounded-[12px] py-[8px] z-10" data-ai-alt="知识库选择弹窗">
-                        <div className="px-[16px] py-[6px] text-[12px] text-gray-500 font-medium">选择知识库</div>
-                        {mockKnowledgeBases.map(kb => (
-                          <div
-                            key={kb}
-                            className="px-[16px] py-[8px] hover:bg-gray-50 text-[13px] cursor-pointer flex items-center justify-between transition-colors"
-                            onClick={() => { setSelectedKb(kb); setShowKbSelector(false); }}
-                            data-ai-alt={`选择-${kb}`}
-                          >
-                            {kb}
-                            {selectedKb === kb && <i className="fas fa-check text-blue-500 text-[12px]"></i>}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <input
-                    type="text"
+                <form onSubmit={handleSubmit} className="bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.08)] border border-gray-100 flex flex-col p-[16px] focus-within:shadow-[0_4px_16px_rgba(0,0,0,0.12)] transition-shadow" data-ai-alt="输入表单">
+                  <textarea
                     value={input}
-                    onChange={e => setInput(e.target.value)}
+                    onChange={e => {
+                      setInput(e.target.value);
+                      e.target.style.height = 'auto';
+                      e.target.style.height = e.target.scrollHeight + 'px';
+                    }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e); } }}
                     placeholder="问问 Dream"
-                    className="flex-1 bg-transparent outline-none focus:outline-none focus:ring-0 border-none text-[16px] text-gray-800 placeholder:text-gray-400"
+                    rows={1}
+                    className="w-full bg-transparent outline-none focus:outline-none focus:ring-0 border-none text-[16px] text-gray-800 placeholder:text-gray-400 resize-none min-h-[48px] max-h-[160px] overflow-y-auto mb-[8px]"
                     disabled={isLoading}
-                    data-ai-alt="大输入框"
+                    data-ai-alt="多行大输入框"
                   />
-                  <div className="flex items-center gap-[16px] ml-[16px] text-gray-500" data-ai-alt="右侧操作区">
-                    <div className="flex items-center gap-[4px] cursor-pointer hover:bg-gray-100 px-[8px] py-[4px] rounded-[8px]" data-ai-alt="模型切换">
-                      <span className="text-[14px]">Flash</span>
-                      <i className="fas fa-chevron-down inline-flex items-center justify-center w-[12px] h-[12px] text-[12px]"></i>
+                  <div className="flex items-center justify-between mt-[4px]" data-ai-alt="底部操作区">
+                    <div className="relative flex items-center" data-ai-changelog-id="kb-binding-area" data-ai-changelog-title="知识库绑定与选择" data-ai-changelog-desc="支持对话过程中绑定知识库，实现基于指定知识库内容的增强问答">
+                      <i
+                        className={`fas fa-plus inline-flex items-center justify-center w-[32px] h-[32px] text-[20px] rounded-full hover:bg-gray-100 cursor-pointer transition-colors ${selectedKb ? 'text-blue-500' : 'text-gray-400 hover:text-blue-500'}`}
+                        title="添加附件或绑定知识库"
+                        onClick={() => setShowKbSelector(!showKbSelector)}
+                        data-ai-alt="添加附件及知识库"
+                        data-knowledge-citationid="kg://1963882999952154625/2071940487574765569/2071941880326688770/1#1782824414067706_ca493409fb9ff683_20260630210015_0"
+                      ></i>
+                      {showKbSelector && (
+                        <div className="absolute bottom-[28px] left-[0px] w-[220px] bg-white border border-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.1)] rounded-[12px] py-[8px] z-10" data-ai-alt="知识库选择弹窗">
+                          <div className="px-[16px] py-[6px] text-[12px] text-gray-500 font-medium">选择知识库</div>
+                          {mockKnowledgeBases.map(kb => (
+                            <div
+                              key={kb}
+                              className="px-[16px] py-[8px] hover:bg-gray-50 text-[13px] cursor-pointer flex items-center justify-between transition-colors"
+                              onClick={() => { setSelectedKb(kb); setShowKbSelector(false); }}
+                              data-ai-alt={`选择-${kb}`}
+                            >
+                              {kb}
+                              {selectedKb === kb && <i className="fas fa-check text-blue-500 text-[12px]"></i>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <button type="submit" disabled={!input.trim() || isLoading} className="text-blue-500 hover:text-blue-600 disabled:text-gray-300 disabled:cursor-not-allowed" data-ai-alt="发送按钮">
-                      {isLoading ? <i className="fas fa-stop inline-flex items-center justify-center w-[16px] h-[16px]"></i> : <i className="fas fa-paper-plane inline-flex items-center justify-center w-[18px] h-[18px] text-[18px]"></i>}
-                    </button>
+                    <div className="flex items-center gap-[16px] text-gray-500" data-ai-alt="右侧操作区">
+                      <div className="flex items-center gap-[4px] cursor-pointer hover:bg-gray-100 px-[8px] py-[4px] rounded-[8px]" data-ai-alt="模型切换">
+                        <span className="text-[14px]">Flash</span>
+                        <i className="fas fa-chevron-down inline-flex items-center justify-center w-[12px] h-[12px] text-[12px]"></i>
+                      </div>
+                      <button type="submit" disabled={!input.trim() || isLoading} className="text-blue-500 hover:text-blue-600 disabled:text-gray-300 disabled:cursor-not-allowed" data-ai-alt="发送按钮">
+                        {isLoading ? <i className="fas fa-stop inline-flex items-center justify-center w-[16px] h-[16px]"></i> : <i className="fas fa-paper-plane inline-flex items-center justify-center w-[18px] h-[18px] text-[18px]"></i>}
+                      </button>
+                    </div>
                   </div>
                 </form>
               </div>
@@ -322,49 +338,71 @@ data-ai-alt="历史记录项"
                 <i className="fas fa-times cursor-pointer hover:text-blue-800 ml-[4px]" onClick={() => setSelectedKb(null)} data-ai-alt="取消绑定"></i>
               </div>
             )}
-            <form onSubmit={handleSubmit} className="bg-[#F0F4F9] rounded-[32px] flex items-center px-[24px] py-[12px] focus-within:bg-white focus-within:shadow-[0_2px_12px_rgba(0,0,0,0.08)] transition-all border border-transparent focus-within:border-gray-200" data-ai-alt="底部输入表单">
-              <div className="relative flex items-center" data-ai-changelog-id="kb-binding-area-floating" data-ai-changelog-title="知识库绑定与选择" data-ai-changelog-desc="支持对话过程中绑定知识库，实现基于指定知识库内容的增强问答">
-                <i
-                  className={`fas fa-plus inline-flex items-center justify-center w-[16px] h-[16px] mr-[16px] cursor-pointer transition-colors ${selectedKb ? 'text-blue-500' : 'text-gray-400 hover:text-blue-500'}`}
-                  title="添加附件或绑定知识库"
-                  onClick={() => setShowKbSelector(!showKbSelector)}
-                  data-ai-alt="添加附件及知识库"
-                ></i>
-                {showKbSelector && (
-                  <div className="absolute bottom-[40px] left-[-8px] w-[220px] bg-white border border-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.1)] rounded-[12px] py-[8px] z-10" data-ai-alt="知识库选择弹窗">
-                    <div className="px-[16px] py-[6px] text-[12px] text-gray-500 font-medium">选择知识库</div>
-                    {mockKnowledgeBases.map(kb => (
-                      <div
-                        key={kb}
-                        className="px-[16px] py-[8px] hover:bg-gray-50 text-[13px] cursor-pointer flex items-center justify-between transition-colors"
-                        onClick={() => { setSelectedKb(kb); setShowKbSelector(false); }}
-                        data-ai-alt={`选择-${kb}`}
-                      >
-                        {kb}
-                        {selectedKb === kb && <i className="fas fa-check text-blue-500 text-[12px]"></i>}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <input
-                type="text"
+            <form onSubmit={handleSubmit} className="bg-[#F0F4F9] rounded-[24px] flex flex-col p-[16px] focus-within:bg-white focus-within:shadow-[0_2px_12px_rgba(0,0,0,0.08)] transition-all border border-transparent focus-within:border-gray-200" data-ai-alt="底部输入表单">
+              <textarea
                 value={input}
-                onChange={e => setInput(e.target.value)}
+                onChange={e => {
+                  setInput(e.target.value);
+                  e.target.style.height = 'auto';
+                  e.target.style.height = e.target.scrollHeight + 'px';
+                }}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e); } }}
                 placeholder="在此输入消息..."
-                className="flex-1 bg-transparent outline-none focus:outline-none focus:ring-0 border-none text-[15px] text-gray-800 placeholder:text-gray-500"
+                rows={1}
+                className="w-full bg-transparent outline-none focus:outline-none focus:ring-0 border-none text-[15px] text-gray-800 placeholder:text-gray-500 resize-none min-h-[44px] max-h-[160px] overflow-y-auto mb-[8px]"
                 disabled={isLoading}
-                data-ai-alt="悬浮输入框"
+                data-ai-alt="多行悬浮输入框"
               />
-              <div className="flex items-center gap-[16px] ml-[16px] text-gray-500" data-ai-alt="右侧操作区">
-                <button type="submit" disabled={!input.trim() || isLoading} className="text-blue-500 hover:text-blue-600 disabled:text-gray-300 disabled:cursor-not-allowed" data-ai-alt="发送按钮">
-                  {isLoading ? <i className="fas fa-stop inline-flex items-center justify-center w-[16px] h-[16px]"></i> : <i className="fas fa-paper-plane inline-flex items-center justify-center w-[18px] h-[18px] text-[18px]"></i>}
-                </button>
+              <div className="flex items-center justify-between mt-[4px]" data-ai-alt="底部操作区">
+                <div className="relative flex items-center" data-ai-changelog-id="kb-binding-area-floating" data-ai-changelog-title="知识库绑定与选择" data-ai-changelog-desc="支持对话过程中绑定知识库，实现基于指定知识库内容的增强问答">
+                  <i
+                    className={`fas fa-plus inline-flex items-center justify-center w-[32px] h-[32px] text-[20px] rounded-full hover:bg-gray-100 cursor-pointer transition-colors ${selectedKb ? 'text-blue-500' : 'text-gray-400 hover:text-blue-500'}`}
+                    title="添加附件或绑定知识库"
+                    onClick={() => setShowKbSelector(!showKbSelector)}
+                    data-ai-alt="添加附件及知识库"
+                  ></i>
+                  {showKbSelector && (
+                    <div className="absolute bottom-[28px] left-[0px] w-[220px] bg-white border border-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.1)] rounded-[12px] py-[8px] z-10" data-ai-alt="知识库选择弹窗">
+                      <div className="px-[16px] py-[6px] text-[12px] text-gray-500 font-medium">选择知识库</div>
+                      {mockKnowledgeBases.map(kb => (
+                        <div
+                          key={kb}
+                          className="px-[16px] py-[8px] hover:bg-gray-50 text-[13px] cursor-pointer flex items-center justify-between transition-colors"
+                          onClick={() => { setSelectedKb(kb); setShowKbSelector(false); }}
+                          data-ai-alt={`选择-${kb}`}
+                        >
+                          {kb}
+                          {selectedKb === kb && <i className="fas fa-check text-blue-500 text-[12px]"></i>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-[16px] text-gray-500" data-ai-alt="右侧操作区">
+                  <div className="flex items-center gap-[4px] cursor-pointer hover:bg-gray-100 px-[8px] py-[4px] rounded-[8px]" data-ai-alt="模型切换">
+                    <span className="text-[14px]">Flash</span>
+                    <i className="fas fa-chevron-down inline-flex items-center justify-center w-[12px] h-[12px] text-[12px]"></i>
+                  </div>
+                  <button type="submit" disabled={!input.trim() || isLoading} className="text-blue-500 hover:text-blue-600 disabled:text-gray-300 disabled:cursor-not-allowed" data-ai-alt="发送按钮">
+                    {isLoading ? <i className="fas fa-stop inline-flex items-center justify-center w-[16px] h-[16px]"></i> : <i className="fas fa-paper-plane inline-flex items-center justify-center w-[18px] h-[18px] text-[18px]"></i>}
+                  </button>
+                </div>
               </div>
             </form>
             <p className="text-center text-[12px] text-gray-400 mt-[12px]" data-ai-alt="免责声明" data-knowledge-citationid="2062092131721580545">
               AI 可能提供不准确的信息，请核对重要内容。
             </p>
+          </div>
+        )}
+
+        {currentPage === 'kbManager' && (
+          <div className="absolute inset-0 z-20 bg-white">
+            <KbManager onGoDetail={(kb) => { setCurrentKb(kb); setCurrentPage('kbDetail'); }} />
+          </div>
+        )}
+        {currentPage === 'kbDetail' && (
+          <div className="absolute inset-0 z-20 bg-white">
+            <KbDetail kb={currentKb} onBack={() => setCurrentPage('kbManager')} />
           </div>
         )}
       </main>
@@ -373,5 +411,3 @@ data-ai-alt="历史记录项"
 }
 
 export default App;
-
-

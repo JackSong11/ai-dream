@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import {
   listDatasets,
   createDataset,
   deleteDatasets,
   type KnowledgeBase
 } from '../api'
+import AppSidebar from '../components/AppSidebar.vue'
+import { useRouter } from 'vue-router'
 
 const router = useRouter()
+
+/** 侧边栏展开状态（与对话页保持一致的交互） */
+const isSidebarOpen = ref(true)
+
 const list = ref<KnowledgeBase[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -73,113 +78,117 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="min-h-screen bg-canvas text-ink">
-    <!-- Top bar -->
-    <header class="sticky top-0 z-10 flex items-center justify-between border-b border-line-soft bg-surface px-8 py-3">
-      <div class="flex items-center gap-2 text-sm font-medium">
-        <span class="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-xs font-bold text-white">D</span>
-        DREAM · 知识库
-      </div>
+  <div class="w-full h-screen bg-white flex font-sans overflow-hidden text-gray-800">
+    <!-- 左侧边栏（共享组件，保持不动） -->
+    <AppSidebar v-model:open="isSidebarOpen" />
+
+    <!-- 右侧主区域：仅此处替换对话区，展示知识库 -->
+    <main class="flex-1 flex flex-col relative h-full bg-white">
+      <!-- 展开侧边栏按钮 -->
       <button
-        class="rounded-full px-4 py-1.5 text-sm text-ink-soft hover:bg-surface-dim transition"
-        @click="router.push({ name: 'chat-home' })"
+        v-if="!isSidebarOpen"
+        class="absolute top-[16px] left-[16px] z-10 flex items-center justify-center w-[40px] h-[40px] rounded-full hover:bg-gray-100 text-gray-600 transition-colors"
+        title="展开侧边栏"
+        @click="isSidebarOpen = true"
       >
-        返回对话
+        <i class="fas fa-bars text-[16px]"></i>
       </button>
-    </header>
 
-    <main class="mx-auto max-w-[960px] px-6 py-8">
-      <div class="mb-6 flex items-center justify-between">
-        <h1 class="text-xl font-semibold">
-          我的知识库
-          <span class="ml-2 text-sm font-normal text-ink-faint">{{ total }} 个</span>
-        </h1>
-        <div class="flex gap-2">
-          <input
-            v-model="keywords"
-            class="w-52 rounded-full border border-line bg-surface px-4 py-1.5 text-sm outline-none placeholder:text-ink-faint focus:border-accent"
-            placeholder="搜索知识库"
-            @keyup.enter="load"
-          />
-          <button
-            class="rounded-full bg-accent px-4 py-1.5 text-sm font-medium text-white transition hover:bg-blue-700 active:scale-[0.98]"
-            @click="showCreate = true"
-          >
-            新建
-          </button>
-        </div>
-      </div>
-
-      <p v-if="errorMsg" class="mb-4 text-sm text-red-600">{{ errorMsg }}</p>
-
-      <div v-if="loading" class="py-20 text-center text-sm text-ink-faint">加载中...</div>
-      <div v-else-if="list.length === 0" class="py-20 text-center text-sm text-ink-faint">
-        还没有知识库，点击右上角新建
-      </div>
-
-      <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
-        <div
-          v-for="kb in list"
-          :key="kb.id"
-          class="group relative cursor-pointer rounded-2xl border border-line bg-surface p-5 transition hover:border-accent/30 hover:shadow-card"
-          @click="openDocs(kb)"
+      <!-- 顶部栏 -->
+      <header class="h-[64px] px-[24px] flex items-center justify-between border-b border-gray-100 bg-white shrink-0">
+        <h2 class="text-[18px] font-medium text-gray-800">
+          知识库管理
+          <span class="ml-[8px] text-[13px] font-normal text-gray-400">{{ total }} 个</span>
+        </h2>
+        <button
+          class="bg-blue-500 hover:bg-blue-600 text-white px-[16px] py-[8px] rounded-[8px] text-[14px] transition-colors flex items-center gap-[6px]"
+          @click="showCreate = true"
         >
-          <div class="flex items-start gap-3">
-            <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-accent-soft text-sm font-bold text-accent">
-              {{ kb.name.charAt(0).toUpperCase() }}
+          <i class="fas fa-plus"></i> 新增知识库
+        </button>
+      </header>
+
+      <!-- 内容区 -->
+      <div class="flex-1 overflow-y-auto p-[24px] bg-gray-50/50">
+        <!-- 工具栏 -->
+        <div class="flex items-center mb-[24px]">
+          <div class="relative">
+            <i class="fas fa-search absolute left-[16px] top-1/2 -translate-y-1/2 text-[13px] text-gray-400"></i>
+            <input
+              v-model="keywords"
+              class="w-[240px] rounded-full bg-white border border-gray-100 pl-[40px] pr-[16px] py-[10px] text-[14px] outline-none placeholder:text-gray-400 focus:shadow-[0_2px_8px_rgba(0,0,0,0.06)] transition-all"
+              placeholder="搜索知识库"
+              @keyup.enter="load"
+            />
+          </div>
+        </div>
+
+        <p v-if="errorMsg" class="mb-[16px] text-[13px] text-red-500">{{ errorMsg }}</p>
+
+        <div v-if="loading" class="py-[80px] text-center text-[14px] text-gray-400">加载中...</div>
+        <div v-else-if="list.length === 0" class="py-[80px] text-center text-[14px] text-gray-400">
+          还没有知识库，点击右上角新建
+        </div>
+
+        <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-[20px]">
+          <div
+            v-for="kb in list"
+            :key="kb.id"
+            class="group relative bg-white border border-gray-100 rounded-[12px] p-[20px] hover:shadow-md transition-shadow cursor-pointer flex flex-col h-[140px]"
+            @click="openDocs(kb)"
+          >
+            <div class="flex items-start justify-between mb-[12px]">
+              <div class="w-[40px] h-[40px] bg-blue-50 text-blue-500 rounded-[10px] flex items-center justify-center text-[18px]">
+                <i class="fas fa-database"></i>
+              </div>
+              <button
+                class="text-gray-400 hover:text-red-500 w-[24px] h-[24px] flex items-center justify-center rounded-full hover:bg-red-50 transition-colors"
+                title="删除"
+                @click.stop="handleDelete(kb)"
+              >
+                <i class="fas fa-trash-alt text-[13px]"></i>
+              </button>
             </div>
-            <div class="min-w-0 flex-1">
-              <div class="truncate font-medium text-ink">{{ kb.name }}</div>
-              <div class="mt-1 line-clamp-1 text-sm text-ink-faint">
-                {{ kb.description || '暂无描述' }}
-              </div>
-              <div class="mt-2 flex gap-3 text-xs text-ink-faint">
-                <span>{{ kb.docNum }} 文档</span>
-                <span>{{ kb.chunkMethod }}</span>
-              </div>
+            <h3 class="text-[15px] font-medium text-gray-800 mb-[12px] truncate leading-tight">{{ kb.name }}</h3>
+            <div class="flex items-center text-[12px] text-gray-500 justify-between mt-auto">
+              <span><i class="far fa-file-alt mr-[6px]"></i>{{ kb.docNum }} 份文档</span>
+              <span>{{ (kb.modifiedTime || kb.createdTime || '').slice(0, 10) }}</span>
             </div>
           </div>
-          <button
-            class="absolute right-3 top-3 rounded-full p-1.5 text-ink-faint opacity-0 transition hover:bg-red-50 hover:text-red-600 group-hover:opacity-100"
-            title="删除"
-            @click.stop="handleDelete(kb)"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-          </button>
         </div>
       </div>
     </main>
 
-    <!-- Create dialog -->
+    <!-- 新建弹窗 -->
     <div
       v-if="showCreate"
       class="fixed inset-0 z-20 flex items-center justify-center bg-black/30 animate-fade-in"
       @click.self="showCreate = false"
     >
-      <div class="animate-pop-in w-full max-w-[420px] rounded-2xl bg-surface p-6 shadow-float">
-        <h2 class="text-lg font-semibold">新建知识库</h2>
-        <div class="mt-4">
-          <label class="mb-1 block text-sm text-ink-soft">名称</label>
+      <div class="w-full max-w-[420px] rounded-[24px] bg-white p-[24px] shadow-[0_8px_40px_rgba(0,0,0,0.16)]">
+        <h2 class="text-[18px] font-semibold text-gray-800">新建知识库</h2>
+        <div class="mt-[16px]">
+          <label class="mb-[6px] block text-[13px] text-gray-500">名称</label>
           <input
             v-model="form.name"
-            class="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none placeholder:text-ink-faint focus:border-accent"
+            class="w-full rounded-[12px] border border-gray-200 px-[14px] py-[10px] text-[14px] outline-none placeholder:text-gray-400 focus:border-blue-400"
             placeholder="请输入知识库名称"
           />
         </div>
-        <div class="mt-3">
-          <label class="mb-1 block text-sm text-ink-soft">描述</label>
+        <div class="mt-[14px]">
+          <label class="mb-[6px] block text-[13px] text-gray-500">描述</label>
           <textarea
             v-model="form.description"
             rows="3"
-            class="w-full resize-none rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none placeholder:text-ink-faint focus:border-accent"
+            class="w-full resize-none rounded-[12px] border border-gray-200 px-[14px] py-[10px] text-[14px] outline-none placeholder:text-gray-400 focus:border-blue-400"
             placeholder="选填"
           ></textarea>
         </div>
-        <div class="mt-3">
-          <label class="mb-1 block text-sm text-ink-soft">分块方法</label>
+        <div class="mt-[14px]">
+          <label class="mb-[6px] block text-[13px] text-gray-500">分块方法</label>
           <select
             v-model="form.chunkMethod"
-            class="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
+            class="w-full rounded-[12px] border border-gray-200 px-[14px] py-[10px] text-[14px] outline-none focus:border-blue-400"
           >
             <option value="naive">naive（通用）</option>
             <option value="picture">picture（图片）</option>
@@ -187,15 +196,15 @@ onMounted(load)
             <option value="email">email（邮件）</option>
           </select>
         </div>
-        <div class="mt-5 flex justify-end gap-2">
+        <div class="mt-[24px] flex justify-end gap-[10px]">
           <button
-            class="rounded-full px-4 py-2 text-sm text-ink-soft hover:bg-surface-dim transition"
+            class="rounded-full px-[20px] py-[10px] text-[14px] text-gray-600 hover:bg-gray-100 transition"
             @click="showCreate = false"
           >
             取消
           </button>
           <button
-            class="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+            class="rounded-full bg-blue-500 px-[20px] py-[10px] text-[14px] font-medium text-white transition hover:bg-blue-600 disabled:opacity-50"
             :disabled="creating"
             @click="handleCreate"
           >

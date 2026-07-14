@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, nextTick, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import {
   getCurrentUser,
-  logout,
-  tokenStore,
-  listChats,
+  getSession,
+  listSessions,
   createChat,
   createSession,
   chatCompletionStream,
@@ -14,18 +13,21 @@ import {
   type ChatMessage,
   type KnowledgeBase
 } from '../api'
+import AppSidebar from '../components/AppSidebar.vue'
 
 const router = useRouter()
+const route = useRoute()
 
-/** 当前登录用户 */
+/** 共享侧边栏引用（用于刷新历史列表） */
+const sidebarRef = ref<InstanceType<typeof AppSidebar> | null>(null)
+
+/** 当前登录用户（顶部空状态标题��示，由侧边栏加载后同步不再需要） */
 const currentUser = ref('')
-const userInitial = computed(() => (currentUser.value || 'U').charAt(0).toUpperCase())
 
 /** 侧边栏展开/收起 */
 const isSidebarOpen = ref(true)
 
-/** 历史对话列表（真实接口） */
-const chats = ref<Chat[]>([])
+/** 当前激活对话 */
 const activeChat = ref<Chat | null>(null)
 const activeSessionId = ref('')
 
@@ -55,23 +57,6 @@ function scrollToBottom(): void {
 }
 
 /** ============ 数据加载 ============ */
-async function loadUser(): Promise<void> {
-  try {
-    currentUser.value = await getCurrentUser()
-  } catch {
-    await router.push({ name: 'login' })
-  }
-}
-
-async function loadChats(): Promise<void> {
-  try {
-    const resp = await listChats(1, 50)
-    chats.value = resp.chats
-  } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '加载对话失败'
-  }
-}
-
 async function loadDatasets(): Promise<void> {
   try {
     const resp = await listDatasets(1, 100)
@@ -95,7 +80,11 @@ async function handleHistoryClick(chat: Chat): Promise<void> {
   messages.value = []
   errorMsg.value = ''
   try {
-    const s = await createSession(chat.id, `会话 ${Date.now()}`)
+    // 优先复用已有会话，避免每次点击都新建
+    const sessions = await listSessions(chat.id, 1, 1)
+    const s = sessions.length
+      ? await getSession(chat.id, sessions[0].id)
+      : await createSession(chat.id, `会话 ${Date.now()}`)
     activeSessionId.value = s.id
     messages.value = s.messages ?? []
   } catch (e) {
@@ -125,10 +114,11 @@ async function handleSubmit(): Promise<void> {
         name: q.slice(0, 20) || '新对话',
         datasetIds: selectedKb.value ? [selectedKb.value.id] : undefined
       })
-      chats.value.unshift(chat)
       activeChat.value = chat
       const s = await createSession(chat.id, '默认会话')
       activeSessionId.value = s.id
+      // 新建对话后刷新侧边栏历史
+      sidebarRef.value?.reloadChats()
     }
     if (!activeSessionId.value && activeChat.value) {
       const s = await createSession(activeChat.value.id, '默认会')
@@ -172,17 +162,15 @@ function onEnter(e: KeyboardEvent): void {
   handleSubmit()
 }
 
-function textOf(m: ChatMessage): string {
-  return m.content
+/** 输入框自动增高 */
+function autoGrow(e: Event): void {
+  const el = e.target as HTMLTextAreaElement
+  el.style.height = 'auto'
+  el.style.height = el.scrollHeight + 'px'
 }
 
-async function handleLogout(): Promise<void> {
-  try {
-    await logout()
-  } finally {
-    tokenStore.clear()
-    await router.push({ name: 'login' })
-  }
+function textOf(m: ChatMessage): string {
+  return m.content
 }
 
 /** 点击空白关闭弹窗 */
@@ -192,11 +180,28 @@ function handleClickOutside(e: MouseEvent): void {
   if (!target.closest('[data-model-picker]')) showModelMenu.value = false
 }
 
-onMounted(() => {
-  loadUser()
-  loadChats()
+/** 侧边栏点击历史 -> 打开对话 */
+function onSidebarSelectChat(chat: Chat): void {
+  handleHistoryClick(chat)
+}
+
+onMounted(async () => {
   loadDatasets()
   document.addEventListener('click', handleClickOutside)
+
+  // 顶部问候语所需用户名
+  try {
+    currentUser.value = await getCurrentUser()
+  } catch {
+    /* 忽略，侧边栏守卫会处理未登录 */
+  }
+
+  // 从其它页面（如知识库）点击历史跳转过来，自动打开指定对话
+  const chatId = route.query.chatId as string | undefined
+  if (chatId) {
+    handleHistoryClick({ id: chatId, name: '' } as Chat)
+    router.replace({ name: 'chat-home' })
+  }
 })
 
 onBeforeUnmount(() => {
@@ -206,88 +211,15 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="w-full h-screen bg-white flex font-sans overflow-hidden text-gray-800">
-    <!-- 左侧边栏 -->
-    <aside
-      class="bg-[#F8F9FA] flex flex-col h-full shrink-0 transition-all duration-300 overflow-hidden"
-      :class="isSidebarOpen ? 'w-[280px] border-r border-gray-100' : 'w-0 border-r-0'"
-    >
-      <div class="w-[280px] h-full flex flex-col">
-        <!-- Logo 与收起按钮 -->
-        <div class="flex items-center px-[24px] h-[64px] shrink-0">
-          <button
-            class="flex items-center justify-center w-[16px] h-[32px] text-gray-600 hover:text-gray-800 transition-colors shrink-0"
-            title="收起侧边栏"
-            @click="isSidebarOpen = false"
-          >
-            <i class="fas fa-bars text-[16px]"></i>
-          </button>
-          <div
-            class="text-[18px] font-medium flex items-center cursor-pointer hover:opacity-80 transition-opacity ml-[12px] text-gray-800"
-            @click="handleNewChat"
-          >
-            DreamAI
-          </div>
-        </div>
-
-        <!-- 新建对话 -->
-        <div class="px-[12px] mb-[12px]">
-          <button
-            class="flex items-center bg-gray-200/50 hover:bg-gray-200 rounded-[20px] px-[12px] py-[10px] text-[14px] w-full transition-colors"
-            @click="handleNewChat"
-          >
-            <i class="fas fa-edit text-[16px] text-gray-600 w-[16px] flex items-center justify-center shrink-0"></i>
-            <span class="ml-[12px] font-medium text-gray-800">发起新对话</span>
-          </button>
-        </div>
-
-        <!-- 知识库入口 -->
-        <div class="px-[12px] mb-[16px]">
-          <button
-            class="flex items-center hover:bg-gray-200/50 rounded-[8px] px-[12px] py-[10px] text-[14px] w-full transition-colors text-gray-700"
-            @click="router.push({ name: 'knowledge-base' })"
-          >
-            <i class="fas fa-database text-[16px] text-gray-600 w-[16px] flex items-center justify-center shrink-0"></i>
-            <span class="ml-[12px] font-medium">知识库管理</span>
-          </button>
-        </div>
-
-        <!-- 历史记录 -->
-        <div class="flex-1 overflow-y-auto px-[12px]">
-          <div class="text-[12px] text-gray-500 pl-[12px] pr-[12px] py-[4px] mb-[4px] font-medium">最近</div>
-          <ul class="flex flex-col gap-[2px]">
-            <li
-              v-for="c in chats"
-              :key="c.id"
-              class="px-[16px] py-[10px] cursor-pointer transition-colors flex items-center rounded-full text-[13px]"
-              :class="activeChat?.id === c.id ? 'bg-[#E8EAED] text-gray-900 font-medium' : 'hover:bg-gray-200/50 text-gray-700'"
-              @click="handleHistoryClick(c)"
-            >
-              <span class="flex-1 truncate">{{ c.name }}</span>
-            </li>
-            <li v-if="!chats.length" class="px-[16px] py-[10px] text-[13px] text-gray-400">暂无对话</li>
-          </ul>
-        </div>
-
-        <!-- 底部用户信息 -->
-        <div class="px-[12px] pb-[16px] mt-auto shrink-0">
-          <div class="flex items-center justify-between hover:bg-gray-200/50 cursor-pointer transition-colors rounded-[8px] px-[12px] py-[10px]">
-            <div class="flex items-center gap-[12px]">
-              <div class="w-[32px] h-[32px] rounded-full bg-indigo-500 text-white flex items-center justify-center text-[16px] font-medium shrink-0">
-                {{ userInitial }}
-              </div>
-              <span class="text-[15px] text-gray-800 font-medium truncate">{{ currentUser || '用户' }}</span>
-            </div>
-            <button
-              class="text-gray-500 hover:text-gray-800 transition-colors flex items-center justify-center w-[28px] h-[28px] shrink-0"
-              title="退出登录"
-              @click="handleLogout"
-            >
-              <i class="fas fa-cog text-[16px]"></i>
-            </button>
-          </div>
-        </div>
-      </div>
-    </aside>
+    <!-- 左侧边栏（共享组件） -->
+    <AppSidebar
+      ref="sidebarRef"
+      v-model:open="isSidebarOpen"
+      :active-chat-id="activeChat?.id"
+      embedded
+      @new-chat="handleNewChat"
+      @select-chat="onSidebarSelectChat"
+    />
 
     <!-- 右侧主区域 -->
     <main class="flex-1 flex flex-col relative h-full bg-white">
@@ -323,72 +255,76 @@ onBeforeUnmount(() => {
               <i class="fas fa-times cursor-pointer hover:text-blue-800 ml-[4px]" @click="selectedKb = null"></i>
             </div>
             <form
-             class="bg-white rounded-[32px] shadow-[0_2px_12px_rgba(0,0,0,0.08)] border border-gray-100 flex items-center px-[24px] py-[12px] focus-within:shadow-[0_4px_16px_rgba(0,0,0,0.12)] transition-shadow"
+              class="bg-white rounded-[24px] shadow-[0_2px_12px_rgba(0,0,0,0.08)] border border-gray-100 flex flex-col p-[16px] focus-within:shadow-[0_4px_16px_rgba(0,0,0,0.12)] transition-shadow"
               @submit.prevent="handleSubmit"
             >
-              <div class="relative flex items-center" data-kb-picker>
-                <i
-                  class="fas fa-plus inline-flex items-center justify-center w-[16px] h-[16px] mr-[16px] cursor-pointer transition-colors"
-                  :class="selectedKb ? 'text-blue-500' : 'text-gray-400 hover:text-blue-500'"
-                  title="添加附件或绑定知识库"
-                  @click="showKbSelector = !showKbSelector"
-                ></i>
-                <div
-                  v-if="showKbSelector"
-                  class="absolute bottom-[36px] left-[-8px] w-[220px] bg-white border border-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.1)] rounded-[12px] py-[8px] z-10"
-                >
-                  <div class="px-[16px] py-[6px] text-[12px] text-gray-500 font-medium">选择知识库</div>
-                  <div
-                    v-for="kb in datasets"
-                    :key="kb.id"
-                    class="px-[16px] py-[8px] hover:bg-gray-50 text-[13px] cursor-pointer flex items-center justify-between transition-colors"
-                    @click="selectKb(kb)"
-                  >
-                    {{ kb.name }}
-                    <i v-if="selectedKb?.id === kb.id" class="fas fa-check text-blue-500 text-[12px]"></i>
-                  </div>
-                  <div v-if="!datasets.length" class="px-[16px] py-[8px] text-[13px] text-gray-400">暂无知识库</div>
-                </div>
-              </div>
-              <input
+              <textarea
                 v-model="input"
-                type="text"
                 placeholder="问问 Dream"
-                class="flex-1 bg-transparent outline-none focus:outline-none focus:ring-0 border-none text-[16px] text-gray-800 placeholder:text-gray-400"
+                rows="1"
+                class="w-full bg-transparent outline-none focus:outline-none focus:ring-0 border-none text-[16px] text-gray-800 placeholder:text-gray-400 resize-none min-h-[48px] max-h-[160px] overflow-y-auto mb-[8px]"
                 :disabled="sending"
-              />
-              <div class="flex items-center gap-[16px] ml-[16px] text-gray-500">
-                <div class="relative" data-model-picker>
+                @input="autoGrow"
+                @keydown.enter="onEnter"
+              ></textarea>
+              <div class="flex items-center justify-between mt-[4px]">
+                <div class="relative flex items-center" data-kb-picker>
+                  <i
+                    class="fas fa-plus inline-flex items-center justify-center w-[32px] h-[32px] text-[20px] rounded-full hover:bg-gray-100 cursor-pointer transition-colors"
+                    :class="selectedKb ? 'text-blue-500' : 'text-gray-400 hover:text-blue-500'"
+                    title="添加附件或绑定知识库"
+                    @click="showKbSelector = !showKbSelector"
+                  ></i>
                   <div
-                    class="flex items-center gap-[4px] cursor-pointer hover:bg-gray-100 px-[8px] py-[4px] rounded-[8px]"
-                    @click="showModelMenu = !showModelMenu"
+                    v-if="showKbSelector"
+                    class="absolute bottom-[36px] left-0 w-[220px] bg-white border border-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.1)] rounded-[12px] py-[8px] z-10"
                   >
-                    <span class="text-[14px]">{{ selectedModel }}</span>
-                    <i class="fas fa-chevron-down inline-flex items-center justify-center w-[12px] h-[12px] text-[12px]"></i>
-                  </div>
-                  <div
-                    v-if="showModelMenu"
-                    class="absolute bottom-[32px] right-0 w-[200px] bg-white border border-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.1)] rounded-[12px] py-[8px] z-10"
-                  >
+                    <div class="px-[16px] py-[6px] text-[12px] text-gray-500 font-medium">选择知识库</div>
                     <div
-                      v-for="m in models"
-                      :key="m"
+                      v-for="kb in datasets"
+                      :key="kb.id"
                       class="px-[16px] py-[8px] hover:bg-gray-50 text-[13px] cursor-pointer flex items-center justify-between transition-colors"
-                      @click="pickModel(m)"
+                      @click="selectKb(kb)"
                     >
-                      {{ m }}
-                      <i v-if="m === selectedModel" class="fas fa-check text-blue-500 text-[12px]"></i>
+                      {{ kb.name }}
+                      <i v-if="selectedKb?.id === kb.id" class="fas fa-check text-blue-500 text-[12px]"></i>
+                    </div>
+                    <div v-if="!datasets.length" class="px-[16px] py-[8px] text-[13px] text-gray-400">暂无知识库</div>
+                  </div>
+                </div>
+                <div class="flex items-center gap-[16px] text-gray-500">
+                  <div class="relative" data-model-picker>
+                    <div
+                      class="flex items-center gap-[4px] cursor-pointer hover:bg-gray-100 px-[8px] py-[4px] rounded-[8px]"
+                      @click="showModelMenu = !showModelMenu"
+                    >
+                      <span class="text-[14px]">{{ selectedModel }}</span>
+                      <i class="fas fa-chevron-down inline-flex items-center justify-center w-[12px] h-[12px] text-[12px]"></i>
+                    </div>
+                    <div
+                      v-if="showModelMenu"
+                      class="absolute bottom-[32px] right-0 w-[200px] bg-white border border-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.1)] rounded-[12px] py-[8px] z-10"
+                    >
+                      <div
+                        v-for="m in models"
+                        :key="m"
+                        class="px-[16px] py-[8px] hover:bg-gray-50 text-[13px] cursor-pointer flex items-center justify-between transition-colors"
+                        @click="pickModel(m)"
+                      >
+                        {{ m }}
+                        <i v-if="m === selectedModel" class="fas fa-check text-blue-500 text-[12px]"></i>
+                      </div>
                     </div>
                   </div>
+                  <button
+                    type="submit"
+                    :disabled="!input.trim() || sending"
+                    class="text-blue-500 hover:text-blue-600 disabled:text-gray-300 disabled:cursor-not-allowed"
+                  >
+                    <i v-if="sending" class="fas fa-stop inline-flex items-center justify-center w-[16px] h-[16px]"></i>
+                    <i v-else class="fas fa-paper-plane inline-flex items-center justify-center w-[18px] h-[18px] text-[18px]"></i>
+                  </button>
                 </div>
-                <button
-                  type="submit"
-                  :disabled="!input.trim() || sending"
-                  class="text-blue-500 hover:text-blue-600 disabled:text-gray-300 disabled:cursor-not-allowed"
-                >
-                  <i v-if="sending" class="fas fa-stop inline-flex items-center justify-center w-[16px] h-[16px]"></i>
-                  <i v-else class="fas fa-paper-plane inline-flex items-center justify-center w-[18px] h-[18px] text-[18px]"></i>
-                </button>
               </div>
             </form>
           </div>
@@ -436,50 +372,76 @@ onBeforeUnmount(() => {
         </div>
         <p v-if="errorMsg" class="text-center text-[12px] text-red-500 mb-[8px]">{{ errorMsg }}</p>
         <form
-          class="bg-[#F0F4F9] rounded-[32px] flex items-center px-[24px] py-[12px] focus-within:bg-white focus-within:shadow-[0_2px_12px_rgba(0,0,0,0.08)] transition-all border border-transparent focus-within:border-gray-200"
+          class="bg-[#F0F4F9] rounded-[24px] flex flex-col p-[16px] focus-within:bg-white focus-within:shadow-[0_2px_12px_rgba(0,0,0,0.08)] transition-all border border-transparent focus-within:border-gray-200"
           @submit.prevent="handleSubmit"
         >
-          <div class="relative flex items-center" data-kb-picker>
-            <i
-              class="fas fa-plus inline-flex items-center justify-center w-[16px] h-[16px] mr-[16px] cursor-pointer transition-colors"
-              :class="selectedKb ? 'text-blue-500' : 'text-gray-400 hover:text-blue-500'"
-              title="添加附件或绑定知识库"
-              @click="showKbSelector = !showKbSelector"
-            ></i>
-            <div
-              v-if="showKbSelector"
-              class="absolute bottom-[40px] left-[-8px] w-[220px] bg-white border border-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.1)] rounded-[12px] py-[8px] z-10"
-            >
-              <div class="px-[16px] py-[6px] text-[12px] text-gray-500 font-medium">选择知识库</div>
-              <div
-                v-for="kb in datasets"
-                :key="kb.id"
-                class="px-[16px] py-[8px] hover:bg-gray-50 text-[13px] cursor-pointer flex items-center justify-between transition-colors"
-                @click="selectKb(kb)"
-              >
-                {{ kb.name }}
-                <i v-if="selectedKb?.id === kb.id" class="fas fa-check text-blue-500 text-[12px]"></i>
-              </div>
-              <div v-if="!datasets.length" class="px-[16px] py-[8px] text-[13px] text-gray-400">暂无知识库</div>
-            </div>
-          </div>
-          <input
+          <textarea
             v-model="input"
-            type="text"
             placeholder="在此输入消息..."
-            class="flex-1 bg-transparent outline-none focus:outline-none focus:ring-0 border-none text-[15px] text-gray-800 placeholder:text-gray-500"
+            rows="1"
+            class="w-full bg-transparent outline-none focus:outline-none focus:ring-0 border-none text-[15px] text-gray-800 placeholder:text-gray-500 resize-none min-h-[44px] max-h-[160px] overflow-y-auto mb-[8px]"
             :disabled="sending"
+            @input="autoGrow"
             @keydown.enter="onEnter"
-          />
-          <div class="flex items-center gap-[16px] ml-[16px] text-gray-500">
-            <button
-              type="submit"
-              :disabled="!input.trim() || sending"
-              class="text-blue-500 hover:text-blue-600 disabled:text-gray-300 disabled:cursor-not-allowed"
-            >
-              <i v-if="sending" class="fas fa-stop inline-flex items-center justify-center w-[16px] h-[16px]"></i>
-              <i v-else class="fas fa-paper-plane inline-flex items-center justify-center w-[18px] h-[18px] text-[18px]"></i>
-            </button>
+          ></textarea>
+          <div class="flex items-center justify-between mt-[4px]">
+            <div class="relative flex items-center" data-kb-picker>
+              <i
+                class="fas fa-plus inline-flex items-center justify-center w-[32px] h-[32px] text-[20px] rounded-full hover:bg-gray-100 cursor-pointer transition-colors"
+                :class="selectedKb ? 'text-blue-500' : 'text-gray-400 hover:text-blue-500'"
+                title="添加附件或绑定知识库"
+                @click="showKbSelector = !showKbSelector"
+              ></i>
+              <div
+                v-if="showKbSelector"
+                class="absolute bottom-[36px] left-0 w-[220px] bg-white border border-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.1)] rounded-[12px] py-[8px] z-10"
+              >
+                <div class="px-[16px] py-[6px] text-[12px] text-gray-500 font-medium">选择知识库</div>
+                <div
+                  v-for="kb in datasets"
+                  :key="kb.id"
+                  class="px-[16px] py-[8px] hover:bg-gray-50 text-[13px] cursor-pointer flex items-center justify-between transition-colors"
+                  @click="selectKb(kb)"
+                >
+                  {{ kb.name }}
+                  <i v-if="selectedKb?.id === kb.id" class="fas fa-check text-blue-500 text-[12px]"></i>
+                </div>
+                <div v-if="!datasets.length" class="px-[16px] py-[8px] text-[13px] text-gray-400">暂无知识库</div>
+              </div>
+            </div>
+            <div class="flex items-center gap-[16px] text-gray-500">
+              <div class="relative" data-model-picker>
+                <div
+                  class="flex items-center gap-[4px] cursor-pointer hover:bg-gray-100 px-[8px] py-[4px] rounded-[8px]"
+                  @click="showModelMenu = !showModelMenu"
+                >
+                  <span class="text-[14px]">{{ selectedModel }}</span>
+                  <i class="fas fa-chevron-down inline-flex items-center justify-center w-[12px] h-[12px] text-[12px]"></i>
+                </div>
+                <div
+                  v-if="showModelMenu"
+                  class="absolute bottom-[32px] right-0 w-[200px] bg-white border border-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.1)] rounded-[12px] py-[8px] z-10"
+                >
+                  <div
+                    v-for="m in models"
+                    :key="m"
+                    class="px-[16px] py-[8px] hover:bg-gray-50 text-[13px] cursor-pointer flex items-center justify-between transition-colors"
+                    @click="pickModel(m)"
+                  >
+                    {{ m }}
+                    <i v-if="m === selectedModel" class="fas fa-check text-blue-500 text-[12px]"></i>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="submit"
+                :disabled="!input.trim() || sending"
+                class="text-blue-500 hover:text-blue-600 disabled:text-gray-300 disabled:cursor-not-allowed"
+              >
+                <i v-if="sending" class="fas fa-stop inline-flex items-center justify-center w-[16px] h-[16px]"></i>
+                <i v-else class="fas fa-paper-plane inline-flex items-center justify-center w-[18px] h-[18px] text-[18px]"></i>
+              </button>
+            </div>
           </div>
         </form>
         <p class="text-center text-[12px] text-gray-400 mt-[12px]">AI 可能提供不准确的信息，请核对重要内容。</p>

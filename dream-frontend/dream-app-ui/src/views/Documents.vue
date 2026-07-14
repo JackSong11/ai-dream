@@ -7,9 +7,13 @@ import {
   ingestDocuments,
   type DocItem
 } from '../api'
+import AppSidebar from '../components/AppSidebar.vue'
 
 const route = useRoute()
 const router = useRouter()
+
+/** 侧边栏展开状态 */
+const isSidebarOpen = ref(true)
 
 const datasetId = route.params.datasetId as string
 const datasetName = (route.query.name as string) || '知识库'
@@ -28,7 +32,7 @@ const POLL_INTERVAL = 3000
 let pollTimer: number | null = null
 
 const runStatusMap: Record<number, { text: string; cls: string }> = {
-  0: { text: '未开始', cls: 'bg-surface-dim text-ink-faint' },
+  0: { text: '未开始', cls: 'bg-gray-100 text-gray-500' },
   1: { text: '解析中', cls: 'bg-blue-50 text-blue-600' },
   2: { text: '已取消', cls: 'bg-amber-50 text-amber-600' },
   3: { text: '已完成', cls: 'bg-green-50 text-green-600' },
@@ -37,6 +41,17 @@ const runStatusMap: Record<number, { text: string; cls: string }> = {
 
 function statusInfo(run: number | null) {
   return runStatusMap[run ?? 0] ?? runStatusMap[0]
+}
+
+/** 根据文件后缀返回 FontAwesome 图标类名 */
+function fileIcon(doc: DocItem): string {
+  const suffix = (doc.suffix || doc.name.split('.').pop() || '').toLowerCase()
+  if (suffix === 'pdf') return 'fas fa-file-pdf text-red-500'
+  if (suffix === 'doc' || suffix === 'docx') return 'fas fa-file-word text-blue-500'
+  if (suffix === 'xls' || suffix === 'xlsx') return 'fas fa-file-excel text-green-500'
+  if (suffix === 'ppt' || suffix === 'pptx') return 'fas fa-file-powerpoint text-orange-500'
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(suffix)) return 'fas fa-file-image text-purple-500'
+  return 'fas fa-file-alt text-gray-400'
 }
 
 function formatSize(size: number | null): string {
@@ -139,115 +154,135 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-canvas text-ink">
-    <!-- Top bar -->
-    <header class="sticky top-0 z-10 flex items-center justify-between border-b border-line-soft bg-surface px-8 py-3">
-      <div class="flex items-center gap-1 text-sm text-ink-faint">
-        <span class="cursor-pointer hover:text-accent transition" @click="router.push({ name: 'knowledge-base' })">知识库</span>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mx-1"><path d="m9 18 6-6-6-6"/></svg>
-        <span class="font-medium text-ink">{{ datasetName }}</span>
-      </div>
+  <div class="w-full h-screen bg-white flex font-sans overflow-hidden text-gray-800">
+    <!-- 左侧边栏（共享组件，保持不动） -->
+    <AppSidebar v-model:open="isSidebarOpen" />
+
+    <!-- 右侧主区域 -->
+    <main class="flex-1 flex flex-col relative h-full bg-white">
+      <!-- 展开侧边栏按钮 -->
       <button
-        class="rounded-full px-4 py-1.5 text-sm text-ink-soft hover:bg-surface-dim transition"
-        @click="router.push({ name: 'knowledge-base' })"
+        v-if="!isSidebarOpen"
+        class="absolute top-[16px] left-[16px] z-10 flex items-center justify-center w-[40px] h-[40px] rounded-full hover:bg-gray-100 text-gray-600 transition-colors"
+        title="展开侧边栏"
+        @click="isSidebarOpen = true"
       >
-        返回列表
+        <i class="fas fa-bars text-[16px]"></i>
       </button>
-    </header>
 
-    <main class="mx-auto max-w-[960px] px-6 py-8">
-      <div class="mb-6 flex items-center justify-between">
-        <h1 class="text-xl font-semibold">
-          文档列表
-          <span class="ml-2 text-sm font-normal text-ink-faint">{{ total }} 个</span>
-        </h1>
-        <div class="flex items-center gap-2">
-          <input
-            v-model="keywords"
-            class="w-48 rounded-full border border-line bg-surface px-4 py-1.5 text-sm outline-none placeholder:text-ink-faint focus:border-accent"
-            placeholder="搜索文档"
-            @keyup.enter="load()"
-          />
+      <!-- 顶部栏：面包屑 -->
+      <header class="h-[64px] px-[24px] flex items-center justify-between border-b border-gray-100 bg-white shrink-0">
+        <div class="flex items-center gap-[12px]">
           <button
-            class="whitespace-nowrap rounded-full bg-accent px-4 py-1.5 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
-            :disabled="uploading"
-            @click="triggerUpload"
+            class="text-gray-500 hover:text-gray-800 flex items-center justify-center w-[32px] h-[32px] rounded-full hover:bg-gray-100 transition-colors"
+            title="返回"
+            @click="router.push({ name: 'knowledge-base' })"
           >
-            {{ uploading ? '上传中...' : '上传文档' }}
+            <i class="fas fa-arrow-left"></i>
           </button>
-          <input ref="fileInput" type="file" multiple class="hidden" @change="onFilesSelected" />
+          <h2 class="text-[18px] font-medium text-gray-800">{{ datasetName }}</h2>
+          <span class="text-[13px] font-normal text-gray-400">{{ total }} 个文档</span>
         </div>
-      </div>
+        <button
+          class="flex items-center gap-[6px] whitespace-nowrap bg-blue-500 hover:bg-blue-600 text-white px-[16px] py-[8px] rounded-[8px] text-[14px] transition-colors disabled:opacity-50"
+          :disabled="uploading"
+          @click="triggerUpload"
+        >
+          <i class="fas fa-upload"></i>
+          {{ uploading ? '上传中...' : '上传文件' }}
+        </button>
+        <input ref="fileInput" type="file" multiple class="hidden" @change="onFilesSelected" />
+      </header>
 
-      <p v-if="errorMsg" class="mb-4 text-sm text-red-600">{{ errorMsg }}</p>
+      <!-- 内容区 -->
+      <div class="flex-1 overflow-y-auto p-[24px] bg-gray-50/50">
+        <!-- 工具栏 -->
+        <div class="mb-[24px] flex items-center">
+          <div class="relative">
+            <i class="fas fa-search absolute left-[16px] top-1/2 -translate-y-1/2 text-[13px] text-gray-400"></i>
+            <input
+              v-model="keywords"
+              class="w-[240px] rounded-full bg-white border border-gray-100 pl-[40px] pr-[16px] py-[10px] text-[14px] outline-none placeholder:text-gray-400 focus:shadow-[0_2px_8px_rgba(0,0,0,0.06)] transition-all"
+              placeholder="搜索文档"
+              @keyup.enter="load()"
+            />
+          </div>
+        </div>
 
-      <div v-if="loading" class="py-20 text-center text-sm text-ink-faint">加载中...</div>
-      <div v-else-if="!hasDocs" class="py-20 text-center text-sm text-ink-faint">
-        该知识库暂无文档，点击右上角上传
-      </div>
+        <p v-if="errorMsg" class="mb-[16px] text-[13px] text-red-500">{{ errorMsg }}</p>
 
-      <div v-else class="overflow-hidden rounded-xl border border-line bg-surface">
-        <table class="w-full border-collapse text-sm">
-          <thead>
-            <tr class="border-b border-line-soft text-left text-xs text-ink-faint">
-              <th class="px-4 py-3 font-medium">文档名称</th>
-              <th class="px-4 py-3 font-medium">类型</th>
-              <th class="px-4 py-3 font-medium">大小</th>
-              <th class="px-4 py-3 font-medium">分块数</th>
-              <th class="px-4 py-3 font-medium">状态</th>
-              <th class="px-4 py-3 font-medium">创建时间</th>
-              <th class="px-4 py-3 font-medium">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="doc in docs" :key="doc.id" class="border-b border-line-soft transition hover:bg-canvas/50">
-              <td class="px-4 py-3">
-                <span class="mr-2 rounded bg-accent-soft px-1.5 py-0.5 text-[11px] font-medium text-accent">{{ doc.suffix || '?' }}</span>
-                <span class="font-medium">{{ doc.name }}</span>
-              </td>
-              <td class="px-4 py-3 text-ink-faint">{{ doc.type || '-' }}</td>
-              <td class="px-4 py-3 text-ink-faint">{{ formatSize(doc.size) }}</td>
-              <td class="px-4 py-3 text-ink-faint">{{ doc.chunkCount ?? 0 }}</td>
-              <td class="min-w-[120px] px-4 py-3">
-                <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium" :class="statusInfo(doc.run).cls">
-                  {{ statusInfo(doc.run).text }}
-                  <span v-if="doc.run === 1" class="ml-1">{{ progressPercent(doc) }}%</span>
-                </span>
-                <div
-                  v-if="doc.run === 1 || doc.run === 3"
-                  class="mt-1.5 h-1 w-20 overflow-hidden rounded-full bg-surface-dim"
-                  :title="doc.progressMsg || ''"
-                >
+        <div v-if="loading" class="py-[80px] text-center text-[14px] text-gray-400">加载中...</div>
+        <div v-else-if="!hasDocs" class="py-[80px] text-center text-[14px] text-gray-400">
+          该知识库暂无文档，点击右上角上传
+        </div>
+
+        <div v-else class="overflow-hidden rounded-[20px] border border-gray-100 bg-white">
+          <table class="w-full border-collapse text-[14px]">
+            <thead>
+              <tr class="bg-gray-50 border-b border-gray-100 text-left text-[13px] text-gray-500">
+                <th class="px-[24px] py-[12px] font-medium">文件名</th>
+                <th class="px-[24px] py-[12px] font-medium">类型</th>
+                <th class="px-[24px] py-[12px] font-medium">大小</th>
+                <th class="px-[24px] py-[12px] font-medium">分块数</th>
+                <th class="px-[24px] py-[12px] font-medium">状态</th>
+                <th class="px-[24px] py-[12px] font-medium">上传时间</th>
+                <th class="px-[24px] py-[12px] font-medium">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="doc in docs" :key="doc.id" class="border-b border-gray-50 transition hover:bg-gray-50/50 text-[14px]">
+                <td class="px-[24px] py-[16px]">
+                  <div class="flex items-center gap-[12px]">
+                    <i :class="fileIcon(doc)" class="text-[20px]"></i>
+                    <span class="text-gray-800 font-medium">{{ doc.name }}</span>
+                  </div>
+                </td>
+                <td class="px-[24px] py-[16px] text-gray-500">{{ doc.type || doc.suffix || '-' }}</td>
+                <td class="px-[24px] py-[16px] text-gray-500">{{ formatSize(doc.size) }}</td>
+               <td class="px-[24px] py-[16px] text-gray-500">{{ doc.chunkCount ?? 0 }}</td>
+                <td class="min-w-[140px] px-[24px] py-[16px]">
+                  <span class="inline-flex items-center rounded-full px-[10px] py-[4px] text-[12px] font-medium" :class="statusInfo(doc.run).cls">
+                    <i v-if="doc.run === 1" class="fas fa-spinner fa-spin mr-[4px]"></i>
+                    {{ statusInfo(doc.run).text }}
+                    <span v-if="doc.run === 1" class="ml-[4px]">{{ progressPercent(doc) }}%</span>
+                  </span>
                   <div
-                    class="h-full rounded-full transition-all duration-500"
-                    :class="doc.run === 3 ? 'bg-green-500' : 'bg-accent'"
-                    :style="{ width: progressPercent(doc) + '%' }"
-                  ></div>
-                </div>
-              </td>
-              <td class="px-4 py-3 text-xs text-ink-faint">{{ doc.createdTime }}</td>
-              <td class="whitespace-nowrap px-4 py-3">
-                <button
-                  v-if="doc.run === 1"
-                  class="mr-1 rounded-full px-3 py-1 text-xs text-ink-soft hover:bg-surface-dim transition disabled:opacity-50"
-                  :disabled="isBusy(doc.id)"
-                  @click="runIngest(doc, 2)"
-                >取消</button>
-                <button
-                  v-else
-                  class="mr-1 rounded-full bg-accent-soft px-3 py-1 text-xs font-medium text-accent hover:bg-blue-100 transition disabled:opacity-50"
-                  :disabled="isBusy(doc.id)"
-                  @click="runIngest(doc, 1)"
-                >{{ doc.run === 3 ? '重新解析' : '解析' }}</button>
-                <button
-                  class="rounded-full bg-red-50 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-100 transition disabled:opacity-50"
-                  :disabled="isBusy(doc.id)"
-                  @click="removeDoc(doc)"
-                >删除</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+                    v-if="doc.run === 1 || doc.run === 3"
+                    class="mt-[6px] h-[4px] w-[80px] overflow-hidden rounded-full bg-gray-100"
+                    :title="doc.progressMsg || ''"
+                  >
+                    <div
+                      class="h-full rounded-full transition-all duration-500"
+                      :class="doc.run === 3 ? 'bg-green-500' : 'bg-blue-500'"
+                      :style="{ width: progressPercent(doc) + '%' }"
+                    ></div>
+                  </div>
+                </td>
+                <td class="px-[24px] py-[16px] text-[12px] text-gray-500">{{ doc.createdTime }}</td>
+                <td class="whitespace-nowrap px-[24px] py-[16px]">
+                  <button
+                    v-if="doc.run === 1"
+                    class="mr-[6px] rounded-full px-[14px] py-[6px] text-[12px] text-gray-600 hover:bg-gray-100 transition disabled:opacity-50"
+                    :disabled="isBusy(doc.id)"
+                    @click="runIngest(doc, 2)"
+                  >取消</button>
+                  <button
+                    v-else
+                    class="mr-[6px] rounded-full bg-blue-50 px-[14px] py-[6px] text-[12px] font-medium text-blue-500 hover:bg-blue-100 transition disabled:opacity-50"
+                    :disabled="isBusy(doc.id)"
+                    @click="runIngest(doc, 1)"
+                  >{{ doc.run === 3 ? '重新解析' : '解析' }}</button>
+                  <button
+                    class="text-gray-400 hover:text-red-500 transition-colors w-[28px] h-[28px] inline-flex items-center justify-center rounded-full hover:bg-red-50 disabled:opacity-50"
+                    title="删除文件"
+                    :disabled="isBusy(doc.id)"
+                    @click="removeDoc(doc)"
+                  ><i class="fas fa-trash-alt"></i></button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </main>
   </div>
