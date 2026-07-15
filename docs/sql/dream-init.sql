@@ -81,7 +81,7 @@ CREATE TABLE `kb_task`
     `created_time`  datetime           DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `modified_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
     PRIMARY KEY (`id`),
-    KEY `idx_doc_id` (`doc_id`)
+    KEY             `idx_doc_id` (`doc_id`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_bin COMMENT = '文档解析任务表'
@@ -97,13 +97,13 @@ CREATE TABLE `biz_user`
     `user_id`       varchar(50)  NOT NULL,
     `password_hash` varchar(255) NOT NULL,
     `role`          enum ('ADMIN','USER','OPERATOR') DEFAULT 'USER',
-    `status`        int                              DEFAULT NULL COMMENT '1-启用;0-禁用',
+    `status`        int                   DEFAULT NULL COMMENT '1-启用;0-禁用',
     `avatar_url`    mediumtext,
-    `delete_flag`   tinyint      NOT NULL            DEFAULT 0 COMMENT '逻辑删除字段 0:代表有效， 1:代表逻辑删除',
-    `creator`       varchar(20)                      DEFAULT NULL COMMENT '创建人',
-    `editor`        varchar(20)                      DEFAULT NULL COMMENT '修改人',
-    `created_time`  datetime                         DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `modified_time` timestamp    NOT NULL            DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
+    `delete_flag`   tinyint      NOT NULL DEFAULT 0 COMMENT '逻辑删除字段 0:代表有效， 1:代表逻辑删除',
+    `creator`       varchar(20)           DEFAULT NULL COMMENT '创建人',
+    `editor`        varchar(20)           DEFAULT NULL COMMENT '修改人',
+    `created_time`  datetime              DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `modified_time` timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_userId` (`user_id`)
 ) ENGINE = InnoDB
@@ -117,26 +117,26 @@ CREATE TABLE `biz_user`
 DROP TABLE IF EXISTS `chat_dialog`;
 CREATE TABLE `chat_dialog`
 (
-    `id`                        bigint       NOT NULL COMMENT '主键ID',
-    `name`                      varchar(255)          DEFAULT NULL COMMENT '对话名称',
-    `description`               text COMMENT '对话描述',
-    `user_id`                   varchar(50)           DEFAULT NULL COMMENT '归属的用户ID',
-    `llm_id`                    varchar(128)          DEFAULT NULL COMMENT '聊天模型 ID(对应 RagFlow llm_id)',
-    `llm_setting`               text COMMENT 'LLM 生成参数配置(JSON 字符串)',
-    `prompt_config`             text COMMENT 'Prompt 配置(JSON 字符串)',
-    `kb_ids`                    text COMMENT '绑定的知识库 ID 列表(JSON 数组字符串)',
-    `rerank_id`                 varchar(128)          DEFAULT NULL COMMENT 'rerank 模型 ID',
-    `top_n`                     int                   DEFAULT NULL COMMENT '召回条数(对应 RagFlow top_n)',
-    `top_k`                     int                   DEFAULT NULL COMMENT '向量召回条数(对应 RagFlow top_k)',
-    `similarity_threshold`      double                DEFAULT NULL COMMENT '相似度阈值',
-    `vector_similarity_weight`  double                DEFAULT NULL COMMENT '向量相似度权重',
-    `delete_flag`               tinyint      NOT NULL DEFAULT 0 COMMENT '逻辑删除字段 0:代表有效， 1:代表逻辑删除',
-    `creator`                   varchar(20)           DEFAULT NULL COMMENT '创建人',
-    `editor`                    varchar(20)           DEFAULT NULL COMMENT '修改人',
-    `created_time`              datetime              DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `modified_time`             timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
+    `id`            bigint    NOT NULL COMMENT '主键ID',
+    `name`          varchar(255)       DEFAULT NULL COMMENT '对话名称',
+    `description`   text COMMENT '对话描述',
+    `user_id`       varchar(50)        DEFAULT NULL COMMENT '归属的用户ID',
+    `llm_id`        varchar(128)       DEFAULT NULL COMMENT '聊天模型 ID(对应 RagFlow llm_id)',
+    `llm_setting`   text COMMENT 'LLM 生成参数配置(JSON 字符串)',
+    `prompt_config` text COMMENT 'Prompt 配置(JSON 字符串)',
+    `kb_ids`        text COMMENT '绑定的知识库 ID 列表(JSON 数组字符串)',
+    `rerank_id`     varchar(128)       DEFAULT NULL COMMENT 'rerank 模型 ID',
+    `top_n`         int                DEFAULT NULL COMMENT '召回条数(对应 RagFlow top_n)',
+    `top_k`         int                DEFAULT NULL COMMENT '向量召回条数(对应 RagFlow top_k)',
+    `similarity_threshold` double DEFAULT NULL COMMENT '相似度阈值',
+    `vector_similarity_weight` double DEFAULT NULL COMMENT '向量相似度权重',
+    `delete_flag`   tinyint   NOT NULL DEFAULT 0 COMMENT '逻辑删除字段 0:代表有效， 1:代表逻辑删除',
+    `creator`       varchar(20)        DEFAULT NULL COMMENT '创建人',
+    `editor`        varchar(20)        DEFAULT NULL COMMENT '修改人',
+    `created_time`  datetime           DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `modified_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
     PRIMARY KEY (`id`),
-    KEY `idx_user_id` (`user_id`)
+    KEY             `idx_user_id` (`user_id`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_bin COMMENT = '对话(聊天助手)表'
@@ -148,21 +148,22 @@ CREATE TABLE `chat_dialog`
 DROP TABLE IF EXISTS `chat_conversation`;
 CREATE TABLE `chat_conversation`
 (
-    `id`            bigint       NOT NULL COMMENT '主键ID',
-    `dialog_id`     bigint                DEFAULT NULL COMMENT '所属对话 ID(对应 RagFlow dialog_id)',
-    `user_id`       varchar(50)           DEFAULT NULL COMMENT '归属用户 ID(对应 RagFlow user_id)',
-    `name`          varchar(255)          DEFAULT NULL COMMENT '会话名称',
+    `id`            bigint    NOT NULL COMMENT '主键ID',
+    `dialog_id`     bigint             DEFAULT NULL COMMENT '所属对话 ID(对应 RagFlow dialog_id)',
+    `user_id`       varchar(50)        DEFAULT NULL COMMENT '归属用户 ID(对应 RagFlow user_id)',
+    `name`          varchar(255)       DEFAULT NULL COMMENT '会话名称',
     `message`       longtext COMMENT '消息列表(JSON 数组字符串)',
     `reference`     longtext COMMENT '引用列表(JSON 数组字符串)',
-    `delete_flag`   tinyint      NOT NULL DEFAULT 0 COMMENT '逻辑删除字段 0:代表有效， 1:代表逻辑删除',
-    `creator`       varchar(20)           DEFAULT NULL COMMENT '创建人',
-    `editor`        varchar(20)           DEFAULT NULL COMMENT '修改人',
-    `created_time`  datetime              DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `modified_time` timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
+    `delete_flag`   tinyint   NOT NULL DEFAULT 0 COMMENT '逻辑删除字段 0:代表有效， 1:代表逻辑删除',
+    `creator`       varchar(20)        DEFAULT NULL COMMENT '创建人',
+    `editor`        varchar(20)        DEFAULT NULL COMMENT '修改人',
+    `created_time`  datetime           DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `modified_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
     PRIMARY KEY (`id`),
-    KEY `idx_dialog_id` (`dialog_id`),
-    KEY `idx_user_id` (`user_id`)
+    KEY             `idx_dialog_id` (`dialog_id`),
+    KEY             `idx_user_id` (`user_id`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_bin COMMENT = '会话表'
   ROW_FORMAT = Dynamic;
+
