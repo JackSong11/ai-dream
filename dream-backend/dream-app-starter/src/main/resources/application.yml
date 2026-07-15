@@ -32,8 +32,8 @@ spring:
     password: 123456
   ai:
     openai:
-      base-url: xxxxx
-      api-key: xxxxx
+      base-url: http://ai-api.jdcloud.com/v1
+      api-key: pk-814116ad-9772-40b3-938a-f66fc11772ad
       chat:
         model: Qwen3-235B-A22B
       embedding:
@@ -51,8 +51,8 @@ dream:
       # —— 供应商1：京东云网关（同一 URL + key 下挂多个模型）——
       - id: jdcloud
         type: openai-compatible               # 协议类型（决定用哪个 provider 构建）
-        base-url: xxxxx # 该供应商所有模型共享
-        api-key: xxxxx
+        base-url: http://ai-api.jdcloud.com/v1 # 该供应商所有模型共享
+        api-key: pk-814116ad-9772-40b3-938a-f66fc11772ad
         temperature: 0.7                        # 供应商级默认温度
         models:
           - key: Qwen3-235B-A22B                      # 切换用唯一标识
