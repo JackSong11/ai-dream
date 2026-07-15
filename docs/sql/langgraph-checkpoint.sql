@@ -13,13 +13,7 @@ CREATE TABLE `checkpoint_blobs`
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci;
 
-CREATE TABLE `checkpoint_migrations`
-(
-    `v` int NOT NULL,
-    PRIMARY KEY (`v`)
-) ENGINE = InnoDB
-  DEFAULT CHARSET = utf8mb4
-  COLLATE = utf8mb4_0900_ai_ci;
+
 
 CREATE TABLE `checkpoint_writes`
 (
@@ -39,6 +33,10 @@ CREATE TABLE `checkpoint_writes`
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci;
 
+
+-- ----------------------------
+-- 核心状态表：存储图在某个时间点的核心状态（State Snapshot）和元数据。每次 Agent 节点执行完毕，都会在这里生成一条记录。
+-- ----------------------------
 CREATE TABLE `checkpoints`
 (
     `thread_id`            varchar(150)  NOT NULL,
@@ -52,6 +50,21 @@ CREATE TABLE `checkpoints`
     PRIMARY KEY (`thread_id`, `checkpoint_ns_hash`, `checkpoint_id`),
     KEY `checkpoints_thread_id_idx` (`thread_id`),
     KEY `checkpoints_checkpoint_id_idx` (`checkpoint_id`)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_0900_ai_ci;
+
+
+
+
+
+-- ----------------------------
+-- 没用的表：记录和控制当前数据库中 LangGraph 检查点表的“表结构版本”（Schema Version），用以支持数据库的自动升级和向后兼容。
+-- ----------------------------
+CREATE TABLE `checkpoint_migrations`
+(
+    `v` int NOT NULL,
+    PRIMARY KEY (`v`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci;
