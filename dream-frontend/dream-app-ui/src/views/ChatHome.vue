@@ -185,20 +185,22 @@ async function handleSubmit(): Promise<void> {
   scrollToBottom()
 
   sending.value = true
-  const thinking: ChatMessage = { role: 'assistant', content: '' }
-  messages.value.push(thinking)
+  // push 后 Vue 会用响应式代理包装存入数组，外部原始变量不再指向数组内元素，
+  // 因此必须通过索引操作数组内的响应式对象，视图才会随流式增量刷新。
+  messages.value.push({ role: 'assistant', content: '' })
+  const idx = messages.value.length - 1
   let received = false
   await chatCompletionStream(activeChat.value!.id, activeSessionId.value, q, {
     onDelta: (answer) => {
       received = true
-      thinking.content = answer
+      messages.value[idx].content = answer
       scrollToBottom()
     },
     onError: (msg) => {
-      thinking.content = msg
+      messages.value[idx].content = msg
     },
     onDone: () => {
-      if (!received) thinking.content = '(无回复)'
+      if (!received) messages.value[idx].content = '(无回复)'
       sending.value = false
       scrollToBottom()
     }

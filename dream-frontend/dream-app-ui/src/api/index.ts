@@ -383,13 +383,13 @@ export interface ChatAnswer {
   dialogId: string | null
 }
 
-/** 聊天补全（非流式），对应 POST /api/v1/chat/completions */
+/** 聊天补全（非流式），对应 POST /api/v1/agent/completions（Agent 直连，Spring AI 重写 nanobot process_direct） */
 export function chatCompletion(
   dialogId: string,
   convId: string,
   question: string
 ): Promise<ChatAnswer> {
-  return request<ChatAnswer>('/api/v1/chat/completions', {
+  return request<ChatAnswer>('/api/v1/agent/completions', {
     method: 'POST',
     body: JSON.stringify({
       dialogId,
@@ -424,7 +424,7 @@ export interface StreamHandlers {
 }
 
 /**
- * 聊天补全（流式 SSE），对应 POST /api/v1/chat/completions/stream。
+ * 聊天补全（流式 SSE），对应 POST /api/v1/agent/completions/stream（Agent 直连，Spring AI 重写 nanobot process_direct）。
  * 后端每帧推送 data: {"code":0,"data":{"answer": 累积全文, "reference": {...}, "final": false}}，
  * 结束帧为 data: {"code":0,"data":{"answer":"", "final": true, ...}}（answer 为空，不覆盖内容）。
  */
@@ -435,7 +435,7 @@ export async function chatCompletionStream(
   handlers: StreamHandlers
 ): Promise<void> {
   const token = tokenStore.get()
-  const res = await fetch(BASE_URL + '/api/v1/chat/completions/stream', {
+  const res = await fetch(BASE_URL + '/api/v1/agent/completions/stream', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

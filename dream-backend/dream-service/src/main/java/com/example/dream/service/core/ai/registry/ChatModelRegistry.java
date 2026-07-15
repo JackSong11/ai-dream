@@ -9,6 +9,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
@@ -41,6 +42,11 @@ public class ChatModelRegistry {
     private final Map<String, ChatClient> clientCache = new ConcurrentHashMap<>();
 
     /**
+     * modelKey -> ChatModel 缓存（供手动工具调用循环使用）。
+     */
+    private final Map<String, ChatModel> modelCache = new ConcurrentHashMap<>();
+
+    /**
      * modelKey -> 模型配置（用于列表展示）。
      */
     private final Map<String, ModelProperties> modelMetaCache = new ConcurrentHashMap<>();
@@ -70,7 +76,6 @@ public class ChatModelRegistry {
     public synchronized void refresh() {
         clientCache.clear();
         modelMetaCache.clear();
-
         List<ProviderProperties> providers = properties.getProviders();
         if (CollectionUtils.isEmpty(providers)) {
             log.warn("[ChatModelRegistry] 未配置任何供应商 (dream.ai.providers 为空)");
@@ -93,8 +98,10 @@ public class ChatModelRegistry {
                     throw new BizException("模型 key 全局重复: " + model.getKey());
                 }
                 // 工厂按供应商 type 路由并注入连接参数，再包装为 ChatClient 缓存
-                ChatClient client = ChatClient.builder(factory.create(provider, model)).build();
+                ChatModel chatModel = factory.create(provider, model);
+                ChatClient client = ChatClient.builder(chatModel).build();
                 clientCache.put(model.getKey(), client);
+                modelCache.put(model.getKey(), chatModel);
                 modelMetaCache.put(model.getKey(), model);
                 if (!StringUtils.hasText(firstKey)) {
                     firstKey = model.getKey();
@@ -143,5 +150,17 @@ public class ChatModelRegistry {
      */
     public boolean exists(String modelKey) {
         return clientCache.containsKey(modelKey);
+    }
+
+    /**
+     * 按 modelKey 获取底层 ChatModel（供手动工具调用循环使用）；为空用默认模型。
+     */
+    public ChatModel getChatModel(String modelKey) {
+        String key = StringUtils.hasText(modelKey) ? modelKey : defaultModelKey;
+        ChatModel model = modelCache.get(key);
+        if (model == null) {
+            throw new BizException("模型不存在或未配置: " + key + "，可用模型: " + modelCache.keySet());
+        }
+        return model;
     }
 }
