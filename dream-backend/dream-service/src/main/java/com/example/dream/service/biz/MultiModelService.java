@@ -1,7 +1,7 @@
 package com.example.dream.service.biz;
 
 import com.example.dream.service.core.ai.config.ModelProperties;
-import com.example.dream.service.core.ai.registry.ChatModelRegistry;
+import com.example.dream.service.core.ai.registry.ChatClientRegistry;
 import lombok.RequiredArgsConstructor;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.stereotype.Service;
@@ -13,7 +13,7 @@ import java.util.List;
  * 多模型对话业务编排服务。
  * <p>
  * 对上层屏蔽模型选择细节：Web 层只需传入 modelKey + 提示词，
- * 由本服务通过 { ChatModelRegistry} 路由到对应模型执行对话。
+ * 由本服务通过 {ChatClientRegistry} 路由到对应模型执行对话。
  *
  * @author dream
  */
@@ -21,7 +21,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class MultiModelService {
 
-    private final ChatModelRegistry registry;
+    private final ChatClientRegistry registry;
 
     /**
      * 列出所有可用模型。

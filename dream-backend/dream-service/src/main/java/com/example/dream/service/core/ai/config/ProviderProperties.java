@@ -24,8 +24,8 @@ public class ProviderProperties {
     private String id;
 
     /**
-     * 协议类型，决定由哪个 ChatModelProvider 构建。
-     * 例如：openai-compatible。
+     * 协议类型，决定由哪个 Provider 构建对应 ChatClient。
+     * 例如：openai-compatible、deepseek。
      */
     private String type;
 

@@ -2,7 +2,7 @@ package com.example.dream.service.core.ai.provider;
 
 import com.example.dream.service.core.ai.config.ModelProperties;
 import com.example.dream.service.core.ai.config.ProviderProperties;
-import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Component;
@@ -20,7 +20,7 @@ import org.springframework.util.StringUtils;
  * @author dream
  */
 @Component
-public class OpenAiCompatibleChatModelProvider implements ChatModelProvider {
+public class OpenAiCompatibleChatClientProvider implements ChatClientProvider {
 
     /**
      * 该实现支持的协议类型标识。
@@ -33,7 +33,7 @@ public class OpenAiCompatibleChatModelProvider implements ChatModelProvider {
     }
 
     @Override
-    public ChatModel create(ProviderProperties provider, ModelProperties model) {
+    public ChatClient create(ProviderProperties provider, ModelProperties model) {
         // 连接参数级联：模型级覆盖 > 供应商级
         String baseUrl = StringUtils.hasText(model.getBaseUrl())
                 ? model.getBaseUrl() : provider.getBaseUrl();
@@ -53,8 +53,8 @@ public class OpenAiCompatibleChatModelProvider implements ChatModelProvider {
             optionsBuilder.maxTokens(model.getMaxTokens());
         }
 
-        return OpenAiChatModel.builder()
+        return ChatClient.builder(OpenAiChatModel.builder()
                 .options(optionsBuilder.build())
-                .build();
+                .build()).build();
     }
 }

@@ -4,12 +4,11 @@ import com.example.dream.common.exception.BizException;
 import com.example.dream.service.core.ai.config.DreamAiProperties;
 import com.example.dream.service.core.ai.config.ModelProperties;
 import com.example.dream.service.core.ai.config.ProviderProperties;
-import com.example.dream.service.core.ai.factory.ChatModelFactory;
+import com.example.dream.service.core.ai.factory.ChatClientFactory;
 import jakarta.annotation.PostConstruct;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
@@ -22,7 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 模型注册表与路由中心。
  * <p>
- * 启动时依据配置，通过工厂构建每个模型对应的 {@link ChatClient} 并缓存，
+ * 启动时依据配置，通过工厂构建每个模型对应的 {ChatClient} 并缓存，
  * 业务侧通过 modelKey 获取对应 ChatClient，实现运行时按切换。
  * 支持 { #refresh()} 热更新。
  *
@@ -30,21 +29,16 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Slf4j
 @Component
-public class ChatModelRegistry {
+public class ChatClientRegistry {
 
     private final DreamAiProperties properties;
 
-    private final ChatModelFactory factory;
+    private final ChatClientFactory factory;
 
     /**
      * modelKey -> ChatClient 缓存。
      */
     private final Map<String, ChatClient> clientCache = new ConcurrentHashMap<>();
-
-    /**
-     * modelKey -> ChatModel 缓存（供手动工具调用循环使用）。
-     */
-    private final Map<String, ChatModel> modelCache = new ConcurrentHashMap<>();
 
     /**
      * modelKey -> 模型配置（用于列表展示）。
@@ -60,7 +54,7 @@ public class ChatModelRegistry {
     @Getter
     private volatile String defaultModelKey;
 
-    public ChatModelRegistry(DreamAiProperties properties, ChatModelFactory factory) {
+    public ChatClientRegistry(DreamAiProperties properties, ChatClientFactory factory) {
         this.properties = properties;
         this.factory = factory;
     }
@@ -78,7 +72,7 @@ public class ChatModelRegistry {
         modelMetaCache.clear();
         List<ProviderProperties> providers = properties.getProviders();
         if (CollectionUtils.isEmpty(providers)) {
-            log.warn("[ChatModelRegistry] 未配置任何供应商 (dream.ai.providers 为空)");
+            log.warn("[ChatClientRegistry] 未配置任何供应商 (dream.ai.providers 为空)");
             return;
         }
 
@@ -91,17 +85,22 @@ public class ChatModelRegistry {
             }
             for (ModelProperties model : provider.getModels()) {
                 if (!StringUtils.hasText(model.getKey())) {
-                    log.warn("[ChatModelRegistry] 跳过一个缺少 key 的模型配置: {}", model);
+                    log.warn("[ChatClientRegistry] 跳过一个缺少 key 的模型配置: {}", model);
+                    continue;
+                }
+                String apiKey = StringUtils.hasText(model.getApiKey())
+                        ? model.getApiKey() : provider.getApiKey();
+                if (!StringUtils.hasText(apiKey)) {
+                    log.warn("[ChatClientRegistry] 跳过未配置 API Key 的模型: providerId={}, key={}",
+                            provider.getId(), model.getKey());
                     continue;
                 }
                 if (clientCache.containsKey(model.getKey())) {
                     throw new BizException("模型 key 全局重复: " + model.getKey());
                 }
                 // 工厂按供应商 type 路由并注入连接参数，再包装为 ChatClient 缓存
-                ChatModel chatModel = factory.create(provider, model);
-                ChatClient client = ChatClient.builder(chatModel).build();
+                ChatClient client = factory.create(provider, model);
                 clientCache.put(model.getKey(), client);
-                modelCache.put(model.getKey(), chatModel);
                 modelMetaCache.put(model.getKey(), model);
                 if (!StringUtils.hasText(firstKey)) {
                     firstKey = model.getKey();
@@ -109,13 +108,13 @@ public class ChatModelRegistry {
                 if (model.isPrimary()) {
                     primaryKey = model.getKey();
                 }
-                log.info("[ChatModelRegistry] 已注册模型: providerId={}, key={}, name={}, model={}",
+                log.info("[ChatClientRegistry] 已注册模型: providerId={}, key={}, name={}, model={}",
                         provider.getId(), model.getKey(), model.getName(), model.getModel());
             }
         }
 
         if (!StringUtils.hasText(firstKey)) {
-            log.warn("[ChatModelRegistry] 所有供应商下均无有效模型");
+            log.warn("[ChatClientRegistry] 所有供应商下均无有效模型");
             return;
         }
 
@@ -123,7 +122,7 @@ public class ChatModelRegistry {
         this.defaultModelKey = StringUtils.hasText(primaryKey) ? primaryKey
                 : StringUtils.hasText(properties.getDefaultModel()) ? properties.getDefaultModel()
                 : firstKey;
-        log.info("[ChatModelRegistry] 默认模型: {}", defaultModelKey);
+        log.info("[ChatClientRegistry] 默认模型: {}", defaultModelKey);
     }
 
     /**
@@ -152,15 +151,4 @@ public class ChatModelRegistry {
         return clientCache.containsKey(modelKey);
     }
 
-    /**
-     * 按 modelKey 获取底层 ChatModel（供手动工具调用循环使用）；为空用默认模型。
-     */
-    public ChatModel getChatModel(String modelKey) {
-        String key = StringUtils.hasText(modelKey) ? modelKey : defaultModelKey;
-        ChatModel model = modelCache.get(key);
-        if (model == null) {
-            throw new BizException("模型不存在或未配置: " + key + "，可用模型: " + modelCache.keySet());
-        }
-        return model;
-    }
 }

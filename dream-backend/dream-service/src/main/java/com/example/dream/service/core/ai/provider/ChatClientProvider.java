@@ -2,7 +2,7 @@ package com.example.dream.service.core.ai.provider;
 
 import com.example.dream.service.core.ai.config.ModelProperties;
 import com.example.dream.service.core.ai.config.ProviderProperties;
-import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.client.ChatClient;
 
 /**
  * 模型协议提供者（策略接口）。
@@ -13,25 +13,25 @@ import org.springframework.ai.chat.model.ChatModel;
  *
  * @author dream
  */
-public interface ChatModelProvider {
+public interface ChatClientProvider {
 
     /**
      * 声明本实现支持的协议类型。
-     * 与 {@link ProviderProperties#getType()} 对应。
+     * 与 {ProviderProperties#getType()} 对应。
      *
      * @return 协议类型标识，如 openai-compatible
      */
     String type();
 
     /**
-     * 依据供应商与模型配置构建对应的 ChatModel 实例。
+     * 依据供应商与模型配置构建对应的 ChatClient 实例。
      * <p>
      * 连接参数（baseUrl / apiKey）来自 provider，模型名来自 model，
      * 从而实现同一供应商下多模型共享连接配置。
      *
      * @param provider 供应商（接入点）配置
      * @param model    模型配置
-     * @return 可用的 ChatModel
+     * @return 可供业务调用的 ChatClient
      */
-    ChatModel create(ProviderProperties provider, ModelProperties model);
+    ChatClient create(ProviderProperties provider, ModelProperties model);
 }
