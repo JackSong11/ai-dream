@@ -63,8 +63,8 @@ dream:
         api-key: ${OLLAMA_API_KEY:}
         temperature: 0.7                        # 供应商级默认温度
         models:
-          - key: qwen2.5:7b                      # 切换用唯一标识
-            name: qwen2.5:7b                # 前端展示名
+          - key: ollama-qwen2.5:7b                      # 切换用唯一标识
+            name: ollama-qwen2.5:7b                # 前端展示名
             model: qwen2.5:7b               # 底层真实模型名
             primary: true                        # 默认模型
           - key: Qwen3.5-122B-A10B                        # 同一 URL，只加这 3 行即可
@@ -75,14 +75,14 @@ dream:
             model: DeepSeek-R1
             temperature: 0.6                     # 可选：模型级覆盖温度
       # —— 供应商2：Moonshot（另一个接入点）——
-      - id: moonshot
+      - id: ollama-docker
         type: openai-compatible
-        base-url: https://api.moonshot.cn/v1
-        api-key: ${KIMI_API_KEY:}               # 支持环境变量注入
+        base-url: http://host.docker.internal:11434/v1
+        api-key: ${OLLAMA_DOCKER_API_KEY:}               # 支持环境变量注入
         models:
-          - key: kimi-8k
-            name: Kimi-(Moonshot v1 8k)
-            model: moonshot-v1-8k
+          - key: ollama-qwen2.5:7b-docker
+            name: ollama-qwen2.5:7b-docker
+            model: qwen2.5:7b
       # —— 供应商3：DeepSeek 官方 API（Spring AI DeepSeek 原生实现）——
       - id: deepseek
         type: deepseek
