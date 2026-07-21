@@ -1,32 +1,40 @@
-# Docker Compose 启动说明
+# 本地基础设施 Docker Compose 启动说明
+
+Compose 只负责启动后端依赖的基础设施，不启动 Spring Boot 后端和 Vue 前端。后端、前端均由 IDE 或本地命令手动启动。
 
 ## 启动
 
-首次启动先复制环境变量模板，并填写 `OLLAMA_API_KEY`：
+首次启动先复制环境变量模板：
 
 ```bash
 cp .env.example .env
-docker compose up -d --build
+docker compose up -d
 ```
 
-查看启动状态和后端日志：
+查看基础设施状态：
 
 ```bash
 docker compose ps
-docker compose logs -f backend
+docker compose logs -f
 ```
 
 服务入口：
 
-- 前端：http://localhost
-- 后端：http://localhost:8080
 - Elasticsearch 9.4.3：http://localhost:9200
 - MinIO API：http://localhost:9000
 - MinIO Console：http://localhost:9001
 - MySQL：localhost:3306，数据库 `ai-dream`
 - Redis：localhost:6379
 
-开发环境默认登录账号为 `admin`，密码为 `admin123`。该账号仅由 Compose 初始化脚本创建，生产环境必须删除或修改。
+所有基础设施健康后，在 IntelliJ IDEA 中启动 `DreamAppApplication`。当前 `application.yml` 使用 localhost 地址，可以直接连接 Compose 暴露的端口。
+
+前端可在 `dream-frontend/dream-app-ui` 下手动启动：
+
+```bash
+npm run dev
+```
+
+开发环境默认登录账号为 `admin`，密码为 `123456`。该账号仅由 Compose 初始化脚本创建，生产环境必须删除或修改。
 
 ## 停止与清理
 

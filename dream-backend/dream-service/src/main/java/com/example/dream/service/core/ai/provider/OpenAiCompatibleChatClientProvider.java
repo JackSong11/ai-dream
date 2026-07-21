@@ -8,6 +8,9 @@ import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+import java.net.InetSocketAddress;
+import java.net.Proxy;
+
 /**
  * OpenAI 兼容协议提供者。
  * <p>
@@ -44,11 +47,17 @@ public class OpenAiCompatibleChatClientProvider implements ChatClientProvider {
                 ? model.getTemperature() : provider.getTemperature();
 
         // Spring AI 2.0 中 baseUrl / apiKey / model 等统一配置在 OpenAiChatOptions 上
+        // Spring AI 2.0 已经提供的显式代理配置。当前项目使用的是 OkHttp：为了本地proxyman抓包，可以直接配置代理
+        // 调用链会变成：Spring AI OkHttp → Proxyman 127.0.0.1:9090 → Ollama localhost:11434
         OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
                 .baseUrl(baseUrl)
                 .apiKey(apiKey)
                 .model(model.getModel())
-                .temperature(temperature);
+                .temperature(temperature)
+                .proxy(new Proxy(
+                        Proxy.Type.HTTP,
+                        new InetSocketAddress("127.0.0.1", 9090)
+                ));
         if (model.getMaxTokens() != null) {
             optionsBuilder.maxTokens(model.getMaxTokens());
         }

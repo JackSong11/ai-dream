@@ -204,7 +204,7 @@ async function handleSubmit(): Promise<void> {
       sending.value = false
       scrollToBottom()
     }
-  })
+  }, selectedModelKey.value)
   sending.value = false
   scrollToBottom()
 }
