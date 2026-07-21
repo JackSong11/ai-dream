@@ -1,8 +1,11 @@
 package com.example.dream.service.core.ai.provider;
 
+import com.example.dream.service.agent.AgentToolExecutionRuntime;
 import com.example.dream.service.core.ai.config.ModelProperties;
 import com.example.dream.service.core.ai.config.ProviderProperties;
+import io.micrometer.observation.ObservationRegistry;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.advisor.ToolCallingAdvisor;
 import org.springframework.ai.deepseek.DeepSeekChatModel;
 import org.springframework.ai.deepseek.DeepSeekChatOptions;
 import org.springframework.ai.deepseek.api.DeepSeekApi;
@@ -19,6 +22,12 @@ import org.springframework.util.StringUtils;
  */
 @Component
 public class DeepSeekChatClientProvider implements ChatClientProvider {
+
+    private final AgentToolExecutionRuntime toolExecutionRuntime;
+
+    public DeepSeekChatClientProvider(AgentToolExecutionRuntime toolExecutionRuntime) {
+        this.toolExecutionRuntime = toolExecutionRuntime;
+    }
 
     /**
      * 该实现支持的协议类型标识。
@@ -54,9 +63,13 @@ public class DeepSeekChatClientProvider implements ChatClientProvider {
             optionsBuilder.maxTokens(model.getMaxTokens());
         }
 
-        return ChatClient.builder(DeepSeekChatModel.builder()
+        DeepSeekChatModel chatModel = DeepSeekChatModel.builder()
                 .deepSeekApi(deepSeekApi)
                 .options(optionsBuilder.build())
-                .build()).build();
+                .build();
+
+        return ChatClient.builder(chatModel, ObservationRegistry.NOOP, null, null,
+                        ToolCallingAdvisor.builder().toolCallingManager(toolExecutionRuntime))
+                .build();
     }
 }

@@ -1,8 +1,11 @@
 package com.example.dream.service.core.ai.provider;
 
+import com.example.dream.service.agent.AgentToolExecutionRuntime;
 import com.example.dream.service.core.ai.config.ModelProperties;
 import com.example.dream.service.core.ai.config.ProviderProperties;
+import io.micrometer.observation.ObservationRegistry;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.advisor.ToolCallingAdvisor;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Component;
@@ -24,6 +27,12 @@ import java.net.Proxy;
  */
 @Component
 public class OpenAiCompatibleChatClientProvider implements ChatClientProvider {
+
+    private final AgentToolExecutionRuntime toolExecutionRuntime;
+
+    public OpenAiCompatibleChatClientProvider(AgentToolExecutionRuntime toolExecutionRuntime) {
+        this.toolExecutionRuntime = toolExecutionRuntime;
+    }
 
     /**
      * 该实现支持的协议类型标识。
@@ -62,8 +71,15 @@ public class OpenAiCompatibleChatClientProvider implements ChatClientProvider {
             optionsBuilder.maxTokens(model.getMaxTokens());
         }
 
-        return ChatClient.builder(OpenAiChatModel.builder()
+        OpenAiChatModel chatModel = OpenAiChatModel.builder()
                 .options(optionsBuilder.build())
-                .build()).build();
+                .build();
+
+        // Spring AI 2.0 的 ChatClient 由 ToolCallingAdvisor 驱动工具循环。
+        // 显式注册后，DefaultChatClient 不会再自动添加第二个 ToolAdvisor；同时确保
+        // AgentToolExecutionRuntime 能观察每次工具执行边界并保存 durable checkpoint。
+        return ChatClient.builder(chatModel, ObservationRegistry.NOOP, null, null,
+                        ToolCallingAdvisor.builder().toolCallingManager(toolExecutionRuntime))
+                .build();
     }
 }
