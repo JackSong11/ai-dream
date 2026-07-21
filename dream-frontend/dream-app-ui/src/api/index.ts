@@ -1,5 +1,5 @@
 // 统一 API 请求封装
-const BASE_URL = 'http://localhost:8080'
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080'
 
 const TOKEN_KEY = 'dream_token'
 
@@ -432,7 +432,8 @@ export async function chatCompletionStream(
   dialogId: string,
   convId: string,
   question: string,
-  handlers: StreamHandlers
+  handlers: StreamHandlers,
+  modelKey?: string
 ): Promise<void> {
   const token = tokenStore.get()
   const res = await fetch(BASE_URL + '/api/v1/agent/completions/stream', {
@@ -445,6 +446,7 @@ export async function chatCompletionStream(
     body: JSON.stringify({
       dialogId,
       convId,
+      modelKey,
       messages: [{ role: 'user', content: question }]
     })
   })
@@ -452,6 +454,10 @@ export async function chatCompletionStream(
   if (res.status === 401) {
     tokenStore.clear()
     handlers.onError?.('登录已失效，请重新登录')
+    return
+  }
+  if (!res.ok) {
+    handlers.onError?.(`请求失败 (${res.status})`)
     return
   }
   if (!res.body) {
@@ -477,7 +483,7 @@ export async function chatCompletionStream(
       // 业务错误码：优先提示并结束
       if (obj?.code && obj.code !== 0 && obj?.message) {
         handlers.onError?.(obj.message)
-        return false
+        return true
       }
 
       const data = obj?.data
