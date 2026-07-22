@@ -1,5 +1,6 @@
 package com.example.dream.service.agent;
 
+import io.micrometer.observation.ObservationRegistry;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
@@ -22,8 +23,14 @@ import java.util.Objects;
  */
 @Component
 public class AgentToolExecutionRuntime implements ToolCallingManager {
-    private final ToolCallingManager delegate = ToolCallingManager.builder().build();
+    private final ToolCallingManager delegate;
     private final ThreadLocal<Execution> current = new ThreadLocal<>();
+
+    public AgentToolExecutionRuntime(ObservationRegistry observationRegistry) {
+        this.delegate = ToolCallingManager.builder()
+                .observationRegistry(observationRegistry)
+                .build();
+    }
 
     public Scope open(int maxIterations, BoundaryListener listener) {
         if (current.get() != null) throw new IllegalStateException("不支持嵌套Agent执行。");

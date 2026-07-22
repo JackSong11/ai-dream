@@ -3,6 +3,8 @@ package com.example.dream.app.config;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationPredicate;
 import io.micrometer.observation.ObservationView;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -23,10 +25,12 @@ import org.springframework.context.annotation.Configuration;
         matchIfMissing = true)
 public class AgentObservabilityConfiguration {
 
+    private static final Logger log = LoggerFactory.getLogger(AgentObservabilityConfiguration.class);
     private static final String AGENT_OBSERVATION_PREFIX = "dream.agent.";
 
     @Bean
     ObservationPredicate agentObservationPredicate() {
+        log.info("Agent-only observability is enabled; unrelated root observations will be discarded");
         return (name, context) -> isAgentObservation(name) || hasAgentAncestor(context);
     }
 

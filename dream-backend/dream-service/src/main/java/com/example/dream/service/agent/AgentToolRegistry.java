@@ -1,7 +1,5 @@
 package com.example.dream.service.agent;
 
-import io.micrometer.observation.Observation;
-import io.micrometer.observation.ObservationRegistry;
 import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.ToolCallbackProvider;
@@ -19,11 +17,8 @@ import java.util.function.Consumer;
 @Component
 public class AgentToolRegistry {
     private final List<ToolCallback> callbacks;
-    private final ObservationRegistry observationRegistry;
 
-    public AgentToolRegistry(AgentBuiltinTools builtins, ObjectProvider<ToolCallbackProvider> providers,
-                             ObservationRegistry observationRegistry) {
-        this.observationRegistry = observationRegistry;
+    public AgentToolRegistry(AgentBuiltinTools builtins, ObjectProvider<ToolCallbackProvider> providers) {
         Map<String, ToolCallback> unique = new LinkedHashMap<>();
         Arrays.stream(ToolCallbacks.from(builtins))
                 .forEach(cb -> unique.put(cb.getToolDefinition().name(), cb));
@@ -50,24 +45,16 @@ public class AgentToolRegistry {
 
             @Override
             public String call(String toolInput) {
-                return observeToolCall(delegate, onToolCalled, () -> delegate.call(toolInput));
+                onToolCalled.accept(delegate.getToolDefinition().name());
+                return delegate.call(toolInput);
             }
 
             @Override
             public String call(String toolInput, org.springframework.ai.chat.model.ToolContext toolContext) {
-                return observeToolCall(delegate, onToolCalled, () -> delegate.call(toolInput, toolContext));
+                onToolCalled.accept(delegate.getToolDefinition().name());
+                return delegate.call(toolInput, toolContext);
             }
         }).toList();
-    }
-
-    private String observeToolCall(ToolCallback delegate, Consumer<String> onToolCalled,
-                                   java.util.function.Supplier<String> invocation) {
-        String toolName = delegate.getToolDefinition().name();
-        onToolCalled.accept(toolName);
-        return Observation.createNotStarted("dream.agent.tool", observationRegistry)
-                .contextualName("tool " + toolName)
-                .lowCardinalityKeyValue("gen_ai.tool.name", toolName)
-                .observe(invocation);
     }
 
 }

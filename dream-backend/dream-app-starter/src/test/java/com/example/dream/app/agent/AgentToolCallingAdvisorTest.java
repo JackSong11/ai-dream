@@ -1,6 +1,8 @@
 package com.example.dream.app.agent;
 
 import com.example.dream.service.agent.AgentToolExecutionRuntime;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationHandler;
 import io.micrometer.observation.ObservationRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
@@ -67,7 +69,20 @@ class AgentToolCallingAdvisorTest {
             }
         };
 
-        AgentToolExecutionRuntime runtime = new AgentToolExecutionRuntime();
+        ObservationRegistry observationRegistry = ObservationRegistry.create();
+        List<String> observations = new ArrayList<>();
+        observationRegistry.observationConfig().observationHandler(new ObservationHandler<Observation.Context>() {
+            @Override
+            public void onStart(Observation.Context context) {
+                observations.add(context.getName());
+            }
+
+            @Override
+            public boolean supportsContext(Observation.Context context) {
+                return true;
+            }
+        });
+        AgentToolExecutionRuntime runtime = new AgentToolExecutionRuntime(observationRegistry);
         List<String> boundaries = new ArrayList<>();
         AgentToolExecutionRuntime.BoundaryListener listener = new AgentToolExecutionRuntime.BoundaryListener() {
             @Override
@@ -82,7 +97,7 @@ class AgentToolCallingAdvisorTest {
             }
         };
 
-        ChatClient client = ChatClient.builder(model, ObservationRegistry.NOOP, null, null,
+        ChatClient client = ChatClient.builder(model, observationRegistry, null, null,
                         ToolCallingAdvisor.builder().toolCallingManager(runtime))
                 .build();
         String answer;
@@ -97,6 +112,7 @@ class AgentToolCallingAdvisorTest {
         assertThat(modelCalls).hasValue(2);
         assertThat(boundaries).containsExactly("awaiting:1", "completed:1:10:00");
         assertThat(answer).isEqualTo("现在是 10:00");
+        assertThat(observations).contains("spring.ai.chat.client", "spring.ai.tool");
     }
 
     private ChatResponse response(AssistantMessage message) {

@@ -34,15 +34,17 @@ spring:
     chat:
       client:
         observations:
-          log-prompt: ${AI_OBSERVABILITY_LOG_CONTENT:false}
-          log-completion: ${AI_OBSERVABILITY_LOG_CONTENT:false}
+          # Spring AI 标准内容日志；日志自动携带 traceId/spanId，可从 Grafana Trace 跳转关联日志。
+          log-prompt: ${AI_OBSERVABILITY_LOG_CONTENT:true}
+          log-completion: ${AI_OBSERVABILITY_LOG_CONTENT:true}
       observations:
-        log-prompt: ${AI_OBSERVABILITY_LOG_CONTENT:false}
-        log-completion: ${AI_OBSERVABILITY_LOG_CONTENT:false}
+        log-prompt: ${AI_OBSERVABILITY_LOG_CONTENT:true}
+        log-completion: ${AI_OBSERVABILITY_LOG_CONTENT:true}
         include-error-logging: true
     tools:
       observations:
-        include-content: ${AI_OBSERVABILITY_INCLUDE_TOOL_CONTENT:false}
+        # 同时写入 Spring AI 标准工具 span；生产环境应设为 false。
+        include-content: ${AI_OBSERVABILITY_INCLUDE_TOOL_CONTENT:true}
     # ChatClient 由 dream.ai.providers 动态创建；Spring AI 2.0 使用该顶层属性关闭默认 ChatModel 自动配置。
     # 这不会影响下面的 OpenAI EmbeddingModel 自动配置。
     model:
@@ -130,7 +132,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
 
 # 对应 Logger 的日志级别调为 DEBUG 或更低
 logging:

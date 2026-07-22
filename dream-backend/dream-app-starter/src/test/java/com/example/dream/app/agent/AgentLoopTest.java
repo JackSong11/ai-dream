@@ -74,7 +74,7 @@ class AgentLoopTest {
         when(tools.trackingCallbacks(any())).thenReturn(List.of());
         when(distributedLockService.acquire("dream:lock:agent:conversation:20")).thenReturn(lockHandle);
         loop = new AgentLoop(chatClientRegistry, dialogs, store, tools, properties, distributedLockService,
-                new AgentToolExecutionRuntime(), ObservationRegistry.NOOP);
+                new AgentToolExecutionRuntime(ObservationRegistry.NOOP), ObservationRegistry.NOOP);
     }
 
     @Test

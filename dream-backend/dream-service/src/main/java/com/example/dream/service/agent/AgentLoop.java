@@ -148,7 +148,10 @@ public class AgentLoop {
         String modelKey = StringUtils.hasText(request.modelKey()) ? request.modelKey()
                 : StringUtils.hasText(dialog.getLlmId()) ? dialog.getLlmId() : chatClientRegistry.getDefaultModelKey();
         Observation current = observationRegistry.getCurrentObservation();
-        if (current != null) current.highCardinalityKeyValue("dream.agent.model", modelKey);
+        if (current != null) {
+            current.highCardinalityKeyValue("dream.agent.history.message.count",
+                    Integer.toString(loaded.messages().size()));
+        }
         return new Turn(conversation, loaded.messages(), modelKey);
     }
 
@@ -163,9 +166,7 @@ public class AgentLoop {
                 int currentAttempt = attempt;
                 ChatResponse response = Observation.createNotStarted("dream.agent.model.attempt", observationRegistry)
                         .contextualName("agent model attempt")
-                        .lowCardinalityKeyValue("gen_ai.request.model", turn.modelKey)
-                        .lowCardinalityKeyValue("dream.agent.stream", Boolean.toString(onDelta != null))
-                        .highCardinalityKeyValue("dream.agent.attempt", Integer.toString(currentAttempt))
+                        .lowCardinalityKeyValue("dream.agent.attempt", Integer.toString(currentAttempt))
                         .observe(() -> invokeModel(client, prompt, turn, onDelta));
                 if (Duration.ofNanos(System.nanoTime() - started).toSeconds() > properties.getTimeoutSeconds())
                     throw new BizException("Agent model call timed out");
