@@ -60,6 +60,9 @@ spring:
 # 同一 URL / 密钥下切换不同模型名时，base-url / api-key 只需在 provider 上写一次，
 # 新增模型仅需在该 provider 的 models 下追加 key + name + model 三行，无需改动任何代码。
 dream:
+  observability:
+    # 仅导出 Agent 根 observation 及其所有子调用，屏蔽普通 HTTP/CORS/数据库等独立 trace。
+    agent-only: ${AGENT_OBSERVABILITY_ONLY:true}
   agent:
     max-iterations: 8
     max-attempts: 3

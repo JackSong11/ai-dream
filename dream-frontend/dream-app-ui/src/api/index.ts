@@ -1,5 +1,7 @@
 // 统一 API 请求封装
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080'
+// 默认使用同源地址：开发环境由 Vite 代理，生产环境由 Nginx 代理。
+// 如需直连其它后端，仍可通过 VITE_API_BASE_URL 覆盖。
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 const TOKEN_KEY = 'dream_token'
 
