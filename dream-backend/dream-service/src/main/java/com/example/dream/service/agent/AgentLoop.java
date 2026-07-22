@@ -88,12 +88,13 @@ public class AgentLoop {
     }
 
     private AgentRunResult execute(AgentRunRequest request, Consumer<String> onDelta) {
-        Turn turn = restoreTurn(request);
+        Turn turn = observeStage("dream.agent.restore", "restore agent state", () -> restoreTurn(request));
         transition(turn, TurnState.COMPACT);
         compact(turn.history);
         transition(turn, TurnState.BUILD);
         turn.history.add(AgentMessage.user(request.userText()));
-        store.save(turn.conversation, new AgentSessionState(turn.history, null, true));
+        observeStage("dream.agent.checkpoint", "save pending user turn", () ->
+                store.save(turn.conversation, new AgentSessionState(turn.history, null, true)));
         transition(turn, TurnState.RUN);
 
         try {
@@ -103,11 +104,13 @@ public class AgentLoop {
             } while (!turn.injected.isEmpty() && turn.iterations < properties.getMaxIterations());
             transition(turn, TurnState.SAVE);
             AgentMessage finalMessage = AgentMessage.assistant(turn.answer);
-            store.save(turn.conversation, new AgentSessionState(turn.history,
-                    new RuntimeCheckpoint(RuntimeCheckpoint.Phase.FINAL_RESPONSE, turn.iterations,
-                            turn.modelKey, finalMessage, List.of(), List.of()), true));
+            observeStage("dream.agent.checkpoint", "save final response checkpoint", () ->
+                    store.save(turn.conversation, new AgentSessionState(turn.history,
+                            new RuntimeCheckpoint(RuntimeCheckpoint.Phase.FINAL_RESPONSE, turn.iterations,
+                                    turn.modelKey, finalMessage, List.of(), List.of()), true)));
             turn.history.add(finalMessage);
-            store.save(turn.conversation, new AgentSessionState(turn.history, null, false));
+            observeStage("dream.agent.persist", "persist completed agent turn", () ->
+                    store.save(turn.conversation, new AgentSessionState(turn.history, null, false)));
             transition(turn, TurnState.RESPOND);
             transition(turn, TurnState.DONE);
             Observation current = observationRegistry.getCurrentObservation();
@@ -157,25 +160,13 @@ public class AgentLoop {
             try (AgentToolExecutionRuntime.Scope ignored = toolRuntime.open(properties.getMaxIterations(), listener)) {
                 Prompt prompt = buildPrompt(turn.history, turn.toolsUsed);
                 long started = System.nanoTime();
-                ChatResponse response;
-                if (onDelta == null) {
-                    response = client.prompt(prompt).call().chatResponse();
-                } else {
-                    StringBuilder answer = new StringBuilder();
-                    final ChatResponse[] latest = new ChatResponse[1];
-                    client.prompt(prompt).stream().chatResponse()
-                            .timeout(Duration.ofSeconds(properties.getTimeoutSeconds()))
-                            .doOnNext(chunk -> {
-                                latest[0] = chunk;
-                                String delta = chunk.getResult() == null ? null : chunk.getResult().getOutput().getText();
-                                if (StringUtils.hasLength(delta)) {
-                                    answer.append(delta);
-                                    onDelta.accept(delta);
-                                }
-                            }).blockLast();
-                    response = latest[0];
-                    turn.answer = answer.toString();
-                }
+                int currentAttempt = attempt;
+                ChatResponse response = Observation.createNotStarted("dream.agent.model.attempt", observationRegistry)
+                        .contextualName("agent model attempt")
+                        .lowCardinalityKeyValue("gen_ai.request.model", turn.modelKey)
+                        .lowCardinalityKeyValue("dream.agent.stream", Boolean.toString(onDelta != null))
+                        .highCardinalityKeyValue("dream.agent.attempt", Integer.toString(currentAttempt))
+                        .observe(() -> invokeModel(client, prompt, turn, onDelta));
                 if (Duration.ofNanos(System.nanoTime() - started).toSeconds() > properties.getTimeoutSeconds())
                     throw new BizException("Agent model call timed out");
                 if (response == null || response.getResult() == null) throw new BizException("模型未返回响应");
@@ -199,6 +190,24 @@ public class AgentLoop {
             }
         }
         throw Objects.requireNonNull(last);
+    }
+
+    private ChatResponse invokeModel(ChatClient client, Prompt prompt, Turn turn, Consumer<String> onDelta) {
+        if (onDelta == null) return client.prompt(prompt).call().chatResponse();
+        StringBuilder answer = new StringBuilder();
+        final ChatResponse[] latest = new ChatResponse[1];
+        client.prompt(prompt).stream().chatResponse()
+                .timeout(Duration.ofSeconds(properties.getTimeoutSeconds()))
+                .doOnNext(chunk -> {
+                    latest[0] = chunk;
+                    String delta = chunk.getResult() == null ? null : chunk.getResult().getOutput().getText();
+                    if (StringUtils.hasLength(delta)) {
+                        answer.append(delta);
+                        onDelta.accept(delta);
+                    }
+                }).blockLast();
+        turn.answer = answer.toString();
+        return latest[0];
     }
 
     private AgentToolExecutionRuntime.BoundaryListener checkpointListener(Turn turn) {
@@ -334,6 +343,18 @@ public class AgentLoop {
     private void transition(Turn turn, TurnState next) {
         log.debug("Agent state {} -> {}", turn.state, next);
         turn.state = next;
+    }
+
+    private <T> T observeStage(String name, String contextualName, java.util.function.Supplier<T> action) {
+        return Observation.createNotStarted(name, observationRegistry)
+                .contextualName(contextualName)
+                .observe(action);
+    }
+
+    private void observeStage(String name, String contextualName, Runnable action) {
+        Observation.createNotStarted(name, observationRegistry)
+                .contextualName(contextualName)
+                .observe(action);
     }
 
     private enum TurnState {RESTORE, COMPACT, COMMAND, BUILD, RUN, SAVE, RESPOND, DONE}

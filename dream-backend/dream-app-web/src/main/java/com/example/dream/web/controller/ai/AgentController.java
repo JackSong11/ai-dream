@@ -7,6 +7,8 @@ import com.example.dream.service.agent.AgentLoop;
 import com.example.dream.service.agent.record.AgentRunRequest;
 import com.example.dream.service.agent.record.AgentRunResult;
 import com.example.dream.web.vo.ai.AgentCompletionReqVO;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.util.StringUtils;
@@ -28,6 +30,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class AgentController {
 
     private final AgentLoop agentLoop;
+    private final ObservationRegistry observationRegistry;
 
     @PostMapping("/completions")
     public Result<Map<String, Object>> complete(@RequestBody AgentCompletionReqVO body) {
@@ -41,9 +44,15 @@ public class AgentController {
         String userId = UserContext.getUserId();
         AgentRunRequest request = toRequest(body, userId);
         SseEmitter emitter = new SseEmitter(0L);
+        Observation streamObservation = Observation.createNotStarted("dream.agent.sse", observationRegistry)
+                .contextualName("agent SSE response")
+                .lowCardinalityKeyValue("dream.agent.transport", "sse")
+                .highCardinalityKeyValue("dream.agent.dialog.id", String.valueOf(request.dialogId()))
+                .highCardinalityKeyValue("dream.agent.conversation.id", String.valueOf(request.conversationId()))
+                .start();
         CompletableFuture.runAsync(() -> {
-            AtomicReference<String> accumulated = new AtomicReference<>("");
-            try {
+            try (Observation.Scope ignored = streamObservation.openScope()) {
+                AtomicReference<String> accumulated = new AtomicReference<>("");
                 agentLoop.run(request, delta -> {
                     String full = accumulated.updateAndGet(previous -> previous + delta);
                     send(emitter, frame(full, false, body));
@@ -51,8 +60,11 @@ public class AgentController {
                 send(emitter, frame("", true, body));
                 emitter.complete();
             } catch (Exception e) {
+                streamObservation.error(e);
                 send(emitter, Map.of("code", 500, "message", safeMessage(e)));
                 emitter.complete();
+            } finally {
+                streamObservation.stop();
             }
         });
         return emitter;

@@ -387,13 +387,15 @@ export interface ChatAnswer {
 export function chatCompletion(
   dialogId: string,
   convId: string,
-  question: string
+  question: string,
+  modelKey?: string
 ): Promise<ChatAnswer> {
   return request<ChatAnswer>('/api/v1/agent/completions', {
     method: 'POST',
     body: JSON.stringify({
       dialogId,
       convId,
+      modelKey,
       messages: [{ role: 'user', content: question }]
     })
   })
