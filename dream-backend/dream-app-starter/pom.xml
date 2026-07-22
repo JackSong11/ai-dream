@@ -14,6 +14,15 @@
     <description>用户侧 Spring Boot 启动入口</description>
 
     <dependencies>
+        <!-- Agent 调用链：Actuator + Micrometer Observation + OpenTelemetry OTLP 导出 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-opentelemetry</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.example.dream</groupId>
             <artifactId>dream-app-web</artifactId>

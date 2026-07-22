@@ -7,6 +7,8 @@ import com.example.dream.integration.service.redis.lock.DistributedLockService;
 import com.example.dream.service.agent.record.*;
 import com.example.dream.service.core.DialogCoreService;
 import com.example.dream.service.core.ai.registry.ChatClientRegistry;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -38,11 +40,14 @@ public class AgentLoop {
     private final AgentRuntimeProperties properties;
     private final DistributedLockService distributedLockService;
     private final AgentToolExecutionRuntime toolRuntime;
+    private final ObservationRegistry observationRegistry;
     private final Map<Long, Queue<String>> pendingMessages = new ConcurrentHashMap<>();
     private final Set<Long> activeConversations = ConcurrentHashMap.newKeySet();
 
     /**
      * A follow-up arriving during a turn is consumed before that turn finishes.
+     * 线程安全且带防御性校验的“消息插队/追加”功能。
+     * 它的核心作用是：在系统正在处理某次对话（Turn）时，如果用户又发送了新的追问（Follow-up），将该追问存入对应对话的待处理队列中，以便在当前 Turn 结束前一并消费处理。
      */
     public void inject(Long conversationId, String text) {
         if (conversationId == null || !StringUtils.hasText(text)) return;
@@ -50,17 +55,31 @@ public class AgentLoop {
     }
 
     public AgentRunResult run(AgentRunRequest request, Consumer<String> onDelta) {
+        Observation observation = Observation.createNotStarted("dream.agent.loop", observationRegistry)
+                .contextualName("agent loop")
+                .lowCardinalityKeyValue("dream.agent.stream", Boolean.toString(onDelta != null))
+                .highCardinalityKeyValue("dream.agent.dialog.id", String.valueOf(request.dialogId()))
+                .highCardinalityKeyValue("dream.agent.conversation.id", String.valueOf(request.conversationId()));
+        if (StringUtils.hasText(request.modelKey())) {
+            observation.highCardinalityKeyValue("dream.agent.request.model", request.modelKey());
+        }
+        return observation.observe(() -> runObserved(request, onDelta));
+    }
+
+    private AgentRunResult runObserved(AgentRunRequest request, Consumer<String> onDelta) {
         if (activeConversations.contains(request.conversationId())) {
             inject(request.conversationId(), request.userText());
             return new AgentRunResult("", List.of(), "injected", 0);
         }
         String lockKey = "dream:lock:agent:conversation:" + request.conversationId();
         try (DistributedLockService.LockHandle ignored = distributedLockService.acquire(lockKey)) {
+            // 【双重检查 (DCL)】：防止在获取锁的过程中，其他线程已经抢先开始处理了
             if (!activeConversations.add(request.conversationId())) {
                 inject(request.conversationId(), request.userText());
                 return new AgentRunResult("", List.of(), "injected", 0);
             }
             try {
+                // 正式执行 Agent 推理逻辑
                 return execute(request, onDelta);
             } finally {
                 activeConversations.remove(request.conversationId());
@@ -91,6 +110,12 @@ public class AgentLoop {
             store.save(turn.conversation, new AgentSessionState(turn.history, null, false));
             transition(turn, TurnState.RESPOND);
             transition(turn, TurnState.DONE);
+            Observation current = observationRegistry.getCurrentObservation();
+            if (current != null) {
+                current.lowCardinalityKeyValue("dream.agent.stop.reason", turn.stopReason)
+                        .highCardinalityKeyValue("dream.agent.iterations", Integer.toString(turn.iterations))
+                        .highCardinalityKeyValue("dream.agent.tools.used", String.join(",", turn.toolsUsed));
+            }
             return new AgentRunResult(turn.answer, List.copyOf(turn.toolsUsed), turn.stopReason, turn.iterations);
         } catch (AgentToolExecutionRuntime.MaxIterationsExceededException e) {
             turn.stopReason = "max_iterations";
@@ -104,6 +129,14 @@ public class AgentLoop {
         }
     }
 
+    /**
+     * 这段代码的主要作用是恢复（或加载）一个 Agent 对话轮次（Turn）的上下文信息
+     * restore - 恢复
+     * 1. 权限与存在性校验：安全第一，先确认用户是否有权限访问该对话。
+     * 2. 状态恢复：把持久化存储（如 Redis/MySQL）里的历史消息和 Session 状态加载出来。
+     * 3. 模型兜底策略：设计了一套清晰的模型选择优先级（请求参数 > 基础对话配置 > 系统默认值）。
+     * 4. 组装返回：最终构建一个包含全部上下文信息的 Turn 领域对象。
+     */
     private Turn restoreTurn(AgentRunRequest request) {
         ChatDialogPO dialog = dialogs.getOwnedValidDialog(request.dialogId(), request.userId());
         if (dialog == null) throw new BizException("对话不存在或无权访问");
@@ -111,6 +144,8 @@ public class AgentLoop {
         AgentSessionState loaded = restore(store.load(conversation), conversation);
         String modelKey = StringUtils.hasText(request.modelKey()) ? request.modelKey()
                 : StringUtils.hasText(dialog.getLlmId()) ? dialog.getLlmId() : chatClientRegistry.getDefaultModelKey();
+        Observation current = observationRegistry.getCurrentObservation();
+        if (current != null) current.highCardinalityKeyValue("dream.agent.model", modelKey);
         return new Turn(conversation, loaded.messages(), modelKey);
     }
 

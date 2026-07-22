@@ -29,9 +29,12 @@ import java.net.Proxy;
 public class OpenAiCompatibleChatClientProvider implements ChatClientProvider {
 
     private final AgentToolExecutionRuntime toolExecutionRuntime;
+    private final ObservationRegistry observationRegistry;
 
-    public OpenAiCompatibleChatClientProvider(AgentToolExecutionRuntime toolExecutionRuntime) {
+    public OpenAiCompatibleChatClientProvider(AgentToolExecutionRuntime toolExecutionRuntime,
+                                               ObservationRegistry observationRegistry) {
         this.toolExecutionRuntime = toolExecutionRuntime;
+        this.observationRegistry = observationRegistry;
     }
 
     /**
@@ -73,12 +76,13 @@ public class OpenAiCompatibleChatClientProvider implements ChatClientProvider {
 
         OpenAiChatModel chatModel = OpenAiChatModel.builder()
                 .options(optionsBuilder.build())
+                .observationRegistry(observationRegistry)
                 .build();
 
         // Spring AI 2.0 的 ChatClient 由 ToolCallingAdvisor 驱动工具循环。
         // 显式注册后，DefaultChatClient 不会再自动添加第二个 ToolAdvisor；同时确保
         // AgentToolExecutionRuntime 能观察每次工具执行边界并保存 durable checkpoint。
-        return ChatClient.builder(chatModel, ObservationRegistry.NOOP, null, null,
+        return ChatClient.builder(chatModel, observationRegistry, null, null,
                         ToolCallingAdvisor.builder().toolCallingManager(toolExecutionRuntime))
                 .build();
     }

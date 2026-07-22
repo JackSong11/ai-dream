@@ -24,9 +24,12 @@ import org.springframework.util.StringUtils;
 public class DeepSeekChatClientProvider implements ChatClientProvider {
 
     private final AgentToolExecutionRuntime toolExecutionRuntime;
+    private final ObservationRegistry observationRegistry;
 
-    public DeepSeekChatClientProvider(AgentToolExecutionRuntime toolExecutionRuntime) {
+    public DeepSeekChatClientProvider(AgentToolExecutionRuntime toolExecutionRuntime,
+                                      ObservationRegistry observationRegistry) {
         this.toolExecutionRuntime = toolExecutionRuntime;
+        this.observationRegistry = observationRegistry;
     }
 
     /**
@@ -66,9 +69,10 @@ public class DeepSeekChatClientProvider implements ChatClientProvider {
         DeepSeekChatModel chatModel = DeepSeekChatModel.builder()
                 .deepSeekApi(deepSeekApi)
                 .options(optionsBuilder.build())
+                .observationRegistry(observationRegistry)
                 .build();
 
-        return ChatClient.builder(chatModel, ObservationRegistry.NOOP, null, null,
+        return ChatClient.builder(chatModel, observationRegistry, null, null,
                         ToolCallingAdvisor.builder().toolCallingManager(toolExecutionRuntime))
                 .build();
     }

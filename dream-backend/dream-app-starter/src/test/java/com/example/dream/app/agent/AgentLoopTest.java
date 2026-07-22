@@ -6,13 +6,14 @@ import com.example.dream.integration.service.redis.lock.DistributedLockService;
 import com.example.dream.service.agent.AgentCheckpointStore;
 import com.example.dream.service.agent.AgentLoop;
 import com.example.dream.service.agent.record.AgentRunRequest;
-import com.example.dream.service.agent.AgentRunResult;
+import com.example.dream.service.agent.record.AgentRunResult;
 import com.example.dream.service.agent.record.AgentRuntimeProperties;
 import com.example.dream.service.agent.record.AgentSessionState;
 import com.example.dream.service.agent.AgentToolRegistry;
 import com.example.dream.service.agent.AgentToolExecutionRuntime;
 import com.example.dream.service.core.DialogCoreService;
 import com.example.dream.service.core.ai.registry.ChatClientRegistry;
+import io.micrometer.observation.ObservationRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
@@ -73,7 +74,7 @@ class AgentLoopTest {
         when(tools.trackingCallbacks(any())).thenReturn(List.of());
         when(distributedLockService.acquire("dream:lock:agent:conversation:20")).thenReturn(lockHandle);
         loop = new AgentLoop(chatClientRegistry, dialogs, store, tools, properties, distributedLockService,
-                new AgentToolExecutionRuntime());
+                new AgentToolExecutionRuntime(), ObservationRegistry.NOOP);
     }
 
     @Test

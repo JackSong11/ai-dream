@@ -5,7 +5,7 @@ import com.example.dream.common.exception.BizException;
 import com.example.dream.common.vo.Result;
 import com.example.dream.service.agent.AgentLoop;
 import com.example.dream.service.agent.record.AgentRunRequest;
-import com.example.dream.service.agent.AgentRunResult;
+import com.example.dream.service.agent.record.AgentRunResult;
 import com.example.dream.web.vo.ai.AgentCompletionReqVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
