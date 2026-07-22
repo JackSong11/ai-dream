@@ -31,13 +31,25 @@ spring:
     username: root
     password: 123456
   ai:
+    chat:
+      client:
+        observations:
+          log-prompt: ${AI_OBSERVABILITY_LOG_CONTENT:false}
+          log-completion: ${AI_OBSERVABILITY_LOG_CONTENT:false}
+      observations:
+        log-prompt: ${AI_OBSERVABILITY_LOG_CONTENT:false}
+        log-completion: ${AI_OBSERVABILITY_LOG_CONTENT:false}
+        include-error-logging: true
+    tools:
+      observations:
+        include-content: ${AI_OBSERVABILITY_INCLUDE_TOOL_CONTENT:false}
     # ChatClient 由 dream.ai.providers 动态创建；Spring AI 2.0 使用该顶层属性关闭默认 ChatModel 自动配置。
     # 这不会影响下面的 OpenAI EmbeddingModel 自动配置。
     model:
       chat: none
     openai:
       base-url: http://localhost:11434/v1
-      api-key: ${OLLAMA_API_KEY:}
+      api-key: 123456
       chat:
         model: Qwen3-235B-A22B
       embedding:
@@ -50,6 +62,10 @@ spring:
 dream:
   agent:
     max-iterations: 8
+    max-attempts: 3
+    retry-backoff-millis: 250
+    timeout-seconds: 120
+    max-injections-per-turn: 20
     max-history-messages: 80
     stream-chunk-size: 12
   ai:
@@ -60,7 +76,7 @@ dream:
       - id: ollama
         type: openai-compatible               # 协议类型（决定用哪个 provider 构建）
         base-url: http://localhost:11434/v1 # 该供应商所有模型共享
-        api-key: ${OLLAMA_API_KEY:}
+        api-key: 123456
         temperature: 0.7                        # 供应商级默认温度
         models:
           - key: ollama-qwen2.5:7b                      # 切换用唯一标识
@@ -70,24 +86,12 @@ dream:
           - key: Qwen3.5-122B-A10B                        # 同一 URL，只加这 3 行即可
             name: Qwen3.5-122B-A10B
             model: Qwen3.5-122B-A10B
-          - key: deepseek-r1
-            name: DeepSeek-R1
-            model: DeepSeek-R1
             temperature: 0.6                     # 可选：模型级覆盖温度
-      # —— 供应商2：Moonshot（另一个接入点）——
-      - id: ollama-docker
-        type: openai-compatible
-        base-url: http://host.docker.internal:11434/v1
-        api-key: ${OLLAMA_DOCKER_API_KEY:}               # 支持环境变量注入
-        models:
-          - key: ollama-qwen2.5:7b-docker
-            name: ollama-qwen2.5:7b-docker
-            model: qwen2.5:7b
       # —— 供应商3：DeepSeek 官方 API（Spring AI DeepSeek 原生实现）——
       - id: deepseek
         type: deepseek
         base-url: https://api.deepseek.com
-        api-key: ${DEEPSEEK_API_KEY:}           # Docker Compose 从根目录 .env 注入
+        api-key: ${DEEPSEEK_API_KEY}          # 启动时通过环境变量注入
         models:
           - key: deepseek-v4-flash
             name: deepseek-v4-flash
@@ -106,8 +110,30 @@ minio:
   bucket: dream
   presign-expiry-seconds: 7200
 
+# Agent 全链路通过 OTLP/HTTP 发往本地 OpenTelemetry Collector（例如 Grafana OTEL-LGTM）。
+management:
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  opentelemetry:
+    resource-attributes:
+      service.namespace: ai-dream
+      deployment.environment: ${DEPLOYMENT_ENVIRONMENT:local}
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+          transport: http
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
 # 对应 Logger 的日志级别调为 DEBUG 或更低
 logging:
   level:
     # 比如你的类在 com.example.dao 包下
     com.example.dream: DEBUG
+    org.springframework.ai: ${SPRING_AI_LOG_LEVEL:INFO}
+  pattern:
+    correlation: "[%X{traceId:-},%X{spanId:-}] "
